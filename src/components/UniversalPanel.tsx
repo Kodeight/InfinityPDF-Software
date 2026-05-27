@@ -192,7 +192,7 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
   }
 
   return (
-    <div className="h-full max-w-4xl mx-auto flex flex-col items-center justify-center p-8 gap-6 animate-in slide-in-from-bottom-10 fade-in duration-700">
+    <div className="h-full max-w-4xl mx-auto flex flex-col items-center justify-center p-8 gap-6 animate-in slide-in-from-bottom-10 fade-in duration-700 overflow-y-auto lg:overflow-visible scrollbar-hide">
       <input ref={singleReplaceRef} type="file" className="hidden" onChange={handleReplaceSingle} />
       
       <div className="w-full liquid-glass rounded-[2rem] p-8 flex flex-col gap-6 border border-white/10 relative overflow-hidden">

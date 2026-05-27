@@ -30,6 +30,7 @@ export interface WatermarkOptions {
   opacity: number;
   posX: number;
   posY: number;
+  customWatermarkText?: string;
 }
 
 export interface PDFPermissions {

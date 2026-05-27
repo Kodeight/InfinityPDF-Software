@@ -91,10 +91,15 @@ ipcMain.handle(
       // We pass a single empty string as recipient name, and disable watermark
       let targetRecipients = recipients;
       let isSingleMode = false;
+      const hasCustomRecipient = Boolean(watermark?.customWatermarkText?.trim());
       
       if (!recipients || recipients.length === 0) {
-        targetRecipients = [""]; // Dummy recipient for single pass
-        watermark.enabled = false; // Force disable watermark
+        if (hasCustomRecipient) {
+          targetRecipients = [];
+        } else {
+          targetRecipients = [""]; // Dummy recipient for single pass
+          watermark.enabled = false; // Force disable watermark
+        }
         isSingleMode = true;
       } else {
         // Normal mode: ensure watermark enabled flag matches UI or default

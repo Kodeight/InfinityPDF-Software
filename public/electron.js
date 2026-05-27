@@ -88,9 +88,15 @@ ipcMain.handle(
 
       let targetRecipients = recipients;
       
+      const hasCustomRecipient = Boolean(watermark?.customWatermarkText?.trim());
+
       if (!recipients || recipients.length === 0) {
-        targetRecipients = [""]; 
-        watermark.enabled = false; 
+        if (hasCustomRecipient) {
+          targetRecipients = [];
+        } else {
+          targetRecipients = [""]; 
+          watermark.enabled = false; 
+        }
       } else {
         if (watermark.enabled === undefined) watermark.enabled = true;
       }

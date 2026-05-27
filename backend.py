@@ -5,6 +5,7 @@ import uuid
 import tempfile
 import random
 import string
+import re
 from pathlib import Path
 import traceback
 
@@ -126,12 +127,18 @@ class InfinityBackend:
         if 'pdfRestrictions' not in watermark_options:
             watermark_options['pdfRestrictions'] = {}
 
+        custom_recipient = watermark_options.get('customWatermarkText', '').strip()
+        recipients_to_process = [name for name in recipients if (name or "").strip()] if custom_recipient else list(recipients)
+        if custom_recipient:
+            recipients_to_process.append(custom_recipient)
+            watermark_options['customWatermarkText'] = ''
+
         # Track used filenames to prevent duplicates
         used_filenames = set()
-        total = len(recipients)
+        total = len(recipients_to_process)
 
         # 2. Process for each recipient
-        for i, name in enumerate(recipients):
+        for i, name in enumerate(recipients_to_process):
             try:
                 # Report progress per recipient
                 progress = 5 + int(((i + 1) / max(total, 1)) * 90)
@@ -370,10 +377,33 @@ class InfinityBackend:
             
             elif target_format in ["DOCX", "DOC"]:
                 if ext == '.pdf':
-                    from pdf2docx import Converter
-                    cv = Converter(input_path)
-                    cv.convert(output_path)
-                    cv.close()
+                    try:
+                        from pdf2docx import Converter
+                        # pdf2docx only supports .docx output, not legacy .doc format
+                        # Force output to .docx regardless of requested format
+                        docx_path = f"{os.path.splitext(output_path)[0]}.docx" if output_path.endswith('.doc') else output_path
+                        if not docx_path.endswith('.docx'):
+                            docx_path = docx_path.replace(os.path.splitext(docx_path)[1], '.docx')
+                        
+                        cv = Converter(input_path)
+                        cv.convert(docx_path)
+                        cv.close()
+                        if self._pdf_contains_arabic(input_path):
+                            self._normalize_docx_arabic_rtl(docx_path)
+                        
+                        # Update output_path to the actual created file
+                        output_path = docx_path
+                    except ImportError:
+                        return {"success": False, "error": "pdf2docx library not installed. Install with: pip install pdf2docx"}
+                    except Exception as e:
+                        if self._pdf_contains_arabic(input_path):
+                            try:
+                                self._pdf_to_docx_arabic_text(input_path, docx_path)
+                                output_path = docx_path
+                            except Exception:
+                                return {"success": False, "error": f"PDF to DOCX conversion failed: {str(e)}"}
+                        else:
+                            return {"success": False, "error": f"PDF to DOCX conversion failed: {str(e)}"}
                 else:
                     return {"success": False, "error": f"Unsupported input format for Word conversion: {ext}"}
             
@@ -459,6 +489,94 @@ class InfinityBackend:
             pix.save(output_path)
         doc.close()
         return output_path
+
+    def _contains_arabic(self, text):
+        return bool(re.search(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]', text or ""))
+
+    def _pdf_contains_arabic(self, pdf_path):
+        import fitz
+        doc = fitz.open(pdf_path)
+        try:
+            return any(self._contains_arabic(page.get_text("text")) for page in doc)
+        finally:
+            doc.close()
+
+    def _set_docx_rtl(self, paragraph):
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        p_pr = paragraph._p.get_or_add_pPr()
+        bidi = p_pr.find(qn('w:bidi'))
+        if bidi is None:
+            bidi = OxmlElement('w:bidi')
+            p_pr.append(bidi)
+        bidi.set(qn('w:val'), '1')
+
+        for run in paragraph.runs:
+            r_pr = run._r.get_or_add_rPr()
+            rtl = r_pr.find(qn('w:rtl'))
+            if rtl is None:
+                rtl = OxmlElement('w:rtl')
+                r_pr.append(rtl)
+            rtl.set(qn('w:val'), '1')
+
+    def _normalize_docx_arabic_rtl(self, docx_path):
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        doc = Document(docx_path)
+        changed = False
+
+        for paragraph in doc.paragraphs:
+            if self._contains_arabic(paragraph.text):
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                self._set_docx_rtl(paragraph)
+                changed = True
+
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        if self._contains_arabic(paragraph.text):
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                            self._set_docx_rtl(paragraph)
+                            changed = True
+
+        if changed:
+            doc.save(docx_path)
+
+    def _pdf_to_docx_arabic_text(self, pdf_path, output_path):
+        import fitz
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        pdf = fitz.open(pdf_path)
+        doc = Document()
+        style = doc.styles['Normal']
+        style.font.name = 'Arial'
+
+        try:
+            for page_index, page in enumerate(pdf):
+                if page_index:
+                    doc.add_page_break()
+
+                blocks = page.get_text("blocks")
+                for block in sorted(blocks, key=lambda b: (round(b[1], 1), b[0])):
+                    text = block[4].strip()
+                    if not text:
+                        continue
+
+                    paragraph = doc.add_paragraph()
+                    is_arabic = self._contains_arabic(text)
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT if is_arabic else WD_ALIGN_PARAGRAPH.LEFT
+                    run = paragraph.add_run(text)
+                    run.font.name = 'Arial'
+                    if is_arabic:
+                        self._set_docx_rtl(paragraph)
+
+            doc.save(output_path)
+        finally:
+            pdf.close()
 
     def _pdf_to_pptx(self, pdf_path, output_path):
         import fitz
@@ -551,12 +669,14 @@ if __name__ == "__main__":
                 
                 # Extract recipient names from student list
                 recipients = [s.get('name', '') for s in students]
+                has_custom_recipient = bool(watermark_options.get('customWatermarkText', '').strip())
                 
-                if len(recipients) == 0:
+                if len(recipients) == 0 and not has_custom_recipient:
                     print(json.dumps({"success": False, "error": "No recipients provided", "errorType": "EMPTY_LIST"}))
                     sys.exit(1)
                 
-                print(f"STATUS:Starting batch conversion for {len(recipients)} recipients...")
+                total_recipients = len([name for name in recipients if (name or "").strip()]) + (1 if has_custom_recipient else 0)
+                print(f"STATUS:Starting batch conversion for {total_recipients or len(recipients)} recipients...")
                 print("PROGRESS:5")
                 
                 engine = InfinityBackend(output_dir)
@@ -593,4 +713,3 @@ if __name__ == "__main__":
             sys.exit(1)
     else:
         print("InfinityPDF Backend Engine (pypdf/win32)")
-

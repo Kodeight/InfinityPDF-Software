@@ -51,7 +51,8 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
     fontSize: 36,
     opacity: 10,
     posX: 50,
-    posY: 50
+    posY: 50,
+    customWatermarkText: ''
   });
 
   const [permissions, setPermissions] = useState<PDFPermissions>(() => {
@@ -230,9 +231,11 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
   };
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const customRecipientName = watermark.customWatermarkText?.trim() || "";
+  const previewDisplayName = previewRecipient || customRecipientName;
 
   return (
-    <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 p-4 lg:p-6 overflow-y-auto lg:overflow-hidden">
+    <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6 p-4 lg:p-6 overflow-y-auto lg:overflow-hidden custom-scrollbar">
       {/* COLUMN 1 - Liste des étudiants */}
       <section className="lg:col-span-3 liquid-glass rounded-[1.5rem] flex flex-col border border-white/5 overflow-hidden min-h-[300px] lg:min-h-0">
         <div className="p-6 text-center">
@@ -359,7 +362,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
         </div>
 
         <div className="liquid-glass rounded-[1.5rem] p-4 border border-white/5 flex-1 flex flex-col gap-3 overflow-hidden">
-          <div className="flex flex-col overflow-hidden">
+          <div className={`flex flex-col overflow-hidden min-h-0 ${openSection === 'watermark' ? 'order-1 flex-1' : 'order-2 shrink-0 mt-auto'}`}>
             <button 
               onClick={() => setOpenSection(openSection === 'watermark' ? 'permissions' : 'watermark')}
               className="w-full p-3 flex items-center justify-between text-[0.6875em] font-bold uppercase tracking-widest text-white/80 border border-white/5 bg-white/2 rounded-xl"
@@ -373,11 +376,12 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               </svg>
             </button>
             {openSection === 'watermark' && (
-              <div className="p-3 space-y-2 animate-in fade-in slide-in-from-top-2 duration-300 tool-config-panel-scoped scrollbar-hide">
+              <div className="p-2 animate-in fade-in slide-in-from-top-2 duration-300 tool-config-panel-scoped custom-scrollbar overflow-y-auto min-h-0 flex-1">
                 <LiquidToggle 
                   label={t('enable_watermark')} 
                   checked={watermark.enabled ?? true} 
                   onChange={v => setWatermark({...watermark, enabled: v})} 
+                  compact
                 />
                 <div className="grid grid-cols-2 gap-2">
                   <div className="col-span-2">
@@ -388,11 +392,21 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
                   <OptionInput label={t('position_x')} value={watermark.posX} onChange={v => setWatermark({...watermark, posX: v})} />
                   <OptionInput label={t('position_y')} value={watermark.posY} onChange={v => setWatermark({...watermark, posY: v})} />
                 </div>
+                <div className="col-span-2 space-y-1 mt-2 pt-2 border-t border-white/5">
+                  <label className="text-[0.5625em] font-bold text-white/30 uppercase tracking-[0.1em] px-1 block">{t('custom_watermark')}</label>
+                  <input 
+                    type="text"
+                    value={watermark.customWatermarkText || ''} 
+                    onChange={(e) => setWatermark({...watermark, customWatermarkText: e.target.value})} 
+                    placeholder={t('custom_watermark_placeholder')}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-[0.6875em] text-white/80 outline-none focus:border-white/20 transition-colors"
+                  />
+                </div>
               </div>
             )}
           </div>
 
-          <div className="flex flex-col overflow-hidden">
+          <div className={`flex flex-col overflow-hidden shrink-0 ${openSection === 'permissions' ? 'order-1' : 'order-2 mt-auto'}`}>
             <button 
               onClick={() => setOpenSection(openSection === 'permissions' ? 'watermark' : 'permissions')}
               className="w-full p-3 flex items-center justify-between text-[0.6875em] font-bold uppercase tracking-widest text-white/80 border border-white/5 bg-white/2 rounded-xl"
@@ -406,7 +420,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               </svg>
             </button>
             {openSection === 'permissions' && (
-              <div className="p-3 space-y-1 animate-in fade-in slide-in-from-top-2 duration-300 tool-config-panel-scoped scrollbar-hide">
+              <div className="p-3 space-y-1 animate-in fade-in slide-in-from-top-2 duration-300 tool-config-panel-scoped custom-scrollbar overflow-y-auto max-h-64">
                 <PermissionToggle label={t('allow_printing')} checked={permissions.print} onChange={v => setPermissions(prev => ({...prev, print: v}))} />
                 <PermissionToggle label={t('allow_copying')} checked={permissions.copy} onChange={v => setPermissions(prev => ({...prev, copy: v}))} />
                 <PermissionToggle label={t('allow_editing')} checked={permissions.edit} onChange={v => setPermissions(prev => ({...prev, edit: v}))} />
@@ -433,7 +447,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               >
                  <div className={`w-0 h-0 border-t-4 border-t-white border-x-4 border-x-transparent transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`} />
                  {t('preview_recipient')} 
-                 <span className="text-blue-400">{previewRecipient || (selectedItems.size > 0 ? t('select_dots') : t('none'))}</span>
+                 <span className="text-blue-400">{previewDisplayName || (selectedItems.size > 0 ? t('select_dots') : t('none'))}</span>
               </button>
               
               {isDropdownOpen && selectedItems.size > 0 && (
@@ -475,7 +489,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
                    zIndex: 10
                  }}
                >
-                 {previewRecipient}
+                 {customRecipientName || previewRecipient}
                </div>
              )}
           </div>
@@ -549,9 +563,9 @@ const PermissionToggle: React.FC<{label: string, checked: boolean, onChange: (v:
   <LiquidToggle label={label} checked={checked} onChange={onChange} />
 );
 
-const LiquidToggle: React.FC<{label: string, checked: boolean, onChange: (v: boolean) => void}> = ({ label, checked, onChange }) => (
+const LiquidToggle: React.FC<{label: string, checked: boolean, onChange: (v: boolean) => void, compact?: boolean}> = ({ label, checked, onChange, compact = false }) => (
   <button 
-    className="w-full flex items-center justify-between group cursor-pointer py-1.5 px-3 rounded-xl border border-transparent hover:border-white/5 hover:bg-white/2 transition-all" 
+    className={`w-full flex items-center justify-between group cursor-pointer px-3 rounded-xl border border-transparent hover:border-white/5 hover:bg-white/2 transition-all ${compact ? 'py-0.5' : 'py-1.5'}`}
     onClick={() => onChange(!checked)} 
     role="switch" 
     aria-checked={checked}

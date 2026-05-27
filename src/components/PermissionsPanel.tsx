@@ -244,7 +244,7 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
           </div>
         </div>
       ) : (
-        <div className="h-full grid grid-cols-12 gap-6 p-6 lg:p-10 overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-700">
+        <div className="h-full grid grid-cols-12 gap-6 p-6 lg:p-10 overflow-y-auto lg:overflow-hidden animate-in slide-in-from-bottom-10 fade-in duration-700 scrollbar-hide">
       
       {/* File Info */}
       <section className="col-span-3 liquid-glass rounded-[2.5rem] p-8 flex flex-col border border-white/5 overflow-hidden">

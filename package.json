@@ -5,7 +5,7 @@
   "description": "Professional Document Management Suite",
   "author": "Abdelhalim K.",
   "scripts": {
-    "start": "electron .",
+    "start": "npm run dev",
     "dev": "concurrently \"npm run react-dev\" \"wait-on http://localhost:3000 && electron .\"",
     "react-dev": "react-scripts start",
     "build": "react-scripts build",
