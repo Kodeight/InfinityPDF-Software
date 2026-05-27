@@ -1,0 +1,233 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InfinityPDF</title>
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="%PUBLIC_URL%/favicon.ico" />
+    <link rel="shortcut icon" href="%PUBLIC_URL%/favicon.ico" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Jost', sans-serif;
+            background: #000;
+            overflow: hidden;
+            margin: 0;
+            cursor: none;
+        }
+
+        /* Apple Liquid Glass Effect */
+        .liquid-glass {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(25px) saturate(180%);
+            -webkit-backdrop-filter: blur(25px) saturate(180%);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
+        }
+
+        /* Animated Background - Black Focused (No colors) */
+        .bg-animate {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            background: #000;
+        }
+
+        .bg-vignette {
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0%, transparent 100%);
+            pointer-events: none;
+        }
+
+        /* Minimalist Loader */
+        .loader-container {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: #000;
+            z-index: 99999;
+            transition: opacity 0.5s ease-in-out;
+        }
+
+        .loader-container.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #root {
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out;
+        }
+
+        #root.visible {
+            opacity: 1;
+        }
+
+        /* Custom Cursor */
+        #cursor-dot {
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            position: fixed;
+            pointer-events: none;
+            z-index: 10000;
+            transition: transform 0.1s ease;
+        }
+
+        #cursor-ring {
+            width: 40px;
+            height: 40px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            position: fixed;
+            pointer-events: none;
+            z-index: 9999;
+            transition: all 0.3s ease-out;
+        }
+
+        /* Dotted borders for tool buttons */
+        .tool-btn {
+            border: 2px dashed rgba(255, 255, 255, 0.1);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .tool-btn:hover {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.05);
+            transform: translateY(-4px);
+        }
+
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+        /* Universal Tool Scaling (applied to the ToolView wrapper in App.tsx) */
+        .tool-scaling-base {
+            font-size: 1.25rem; /* ~20px base */
+        }
+
+        /* Scoped reduction for configuration sections (Watermark, Permissions, etc.) */
+        .tool-config-panel-scoped {
+            font-size: 1.125rem; /* ~18px (-2px from base) */
+        }
+        /* Global Focus Reset (Remove blue rings/outlines as requested) */
+        *:focus, *:focus-visible {
+            outline: none !important;
+            --tw-ring-color: transparent !important;
+            --tw-ring-offset-width: 0px !important;
+            box-shadow: none !important;
+        }
+    </style>
+</head>
+<body class="text-white">
+    <div id="cursor-dot"></div>
+    <div id="cursor-ring"></div>
+    <div class="bg-animate">
+        <div class="bg-vignette"></div>
+    </div>
+    <div id="root"></div>
+    <div class="loader-container">
+      <div style="width: 150px; height: 75px;">
+        <svg viewBox="0 0 100 50">
+          <!-- Background Track -->
+          <path
+            d="M25,12.5 C10,12.5 10,37.5 25,37.5 C35,37.5 65,12.5 75,12.5 C90,12.5 90,37.5 75,37.5 C65,37.5 35,12.5 25,12.5 Z"
+            fill="none"
+            stroke="rgba(255, 255, 255, 0.03)"
+            stroke-width="3"
+          />
+          
+          <!-- Glowing Liquid Trail - Layer 1 -->
+          <path
+            d="M25,12.5 C10,12.5 10,37.5 25,37.5 C35,37.5 65,12.5 75,12.5 C90,12.5 90,37.5 75,37.5 C65,37.5 35,12.5 25,12.5 Z"
+            fill="none"
+            stroke="#3b82f6"
+            stroke-width="3.5"
+            stroke-dasharray="40 160"
+            stroke-linecap="round"
+            style="filter: drop-shadow(0 0 8px rgba(59, 130, 246, 0.8));"
+          >
+            <animate
+              attributeName="stroke-dashoffset"
+              from="200"
+              to="0"
+              dur="2s"
+              repeatCount="indefinite"
+            />
+          </path>
+
+          <!-- Glowing Liquid Trail - Layer 2 (Ghosting) -->
+          <path
+            d="M25,12.5 C10,12.5 10,37.5 25,37.5 C35,37.5 65,12.5 75,12.5 C90,12.5 90,37.5 75,37.5 C65,37.5 35,12.5 25,12.5 Z"
+            fill="none"
+            stroke="#60a5fa"
+            stroke-width="2"
+            stroke-dasharray="20 180"
+            stroke-linecap="round"
+            style="filter: blur(2px);"
+          >
+            <animate
+              attributeName="stroke-dashoffset"
+              from="200"
+              to="0"
+              dur="2.2s"
+              repeatCount="indefinite"
+            />
+          </path>
+        </svg>
+      </div>
+    </div>
+
+    <script>
+        const dot = document.getElementById('cursor-dot');
+        const ring = document.getElementById('cursor-ring');
+
+        document.addEventListener('mousemove', (e) => {
+            dot.style.left = e.clientX + 'px';
+            dot.style.top = e.clientY + 'px';
+            ring.animate({
+                left: (e.clientX - 20) + 'px',
+                top: (e.clientY - 20) + 'px'
+            }, { duration: 500, fill: 'forwards' });
+        });
+
+        document.addEventListener('mousedown', () => {
+            ring.style.transform = 'scale(0.8)';
+            ring.style.borderColor = '#3b82f6';
+        });
+
+        document.addEventListener('mouseup', () => {
+            ring.style.transform = 'scale(1)';
+            ring.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+        });
+
+        // Loader control (Pre-React)
+        window.addEventListener("load", () => {
+            const loader = document.querySelector(".loader-container");
+            const root = document.getElementById("root");
+            
+            // Hide static loader immediately when React is ready to take over
+            loader.classList.add("fade-out");
+            root.classList.add("visible");
+            setTimeout(() => {
+                loader.remove();
+            }, 500);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Test files and outputs
+test*.js
+test*.py
+TestOutput/
+**/test*.js
+**/test*.py
+
+# Build, distribution, and local artifacts
+build/
+backend-dist/
+python/build/
+python/venv_build/
+dist/
+output_cli_test.pdf
+dummy*.pdf
+test_image.jpg
+__pycache__/
