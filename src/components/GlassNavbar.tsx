@@ -44,7 +44,7 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang }
             />
           </svg>
         </div>
-        <span className="text-xl font-bold tracking-tight bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
+        <span className="text-xl font-bold tracking-tight text-white">
           InfinityPDF
         </span>
       </div>

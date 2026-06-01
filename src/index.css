@@ -1,0 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=Josefin+Sans:ital,wght@0,100..700;1,100..700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global font and color */
+:root, body {
+  font-family: "Josefin Sans", sans-serif;
+  color: #ffffff;
+}
+
+/* Fix gradient text display */
+.bg-clip-text {
+  background-clip: text;
+  -webkit-background-clip: text;
+}

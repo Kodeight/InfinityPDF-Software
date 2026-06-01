@@ -14,6 +14,11 @@ interface Props {
   lang: string;
 }
 
+interface SourceFile {
+  name: string;
+  path: string;
+}
+
 const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }) => {
   const t = (key: string) => translations[key]?.[lang as LanguageCode] || key;
   // Persistent State Init
@@ -27,9 +32,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
     return savedItems ? new Set(JSON.parse(savedItems)) : new Set();
   });
 
-  // We store path and name separately to persist them
-  const [sourcePath, setSourcePath] = useState<string>("");
-  const [sourceName, setSourceName] = useState<string>("");
+  const [sourceFiles, setSourceFiles] = useState<SourceFile[]>([]);
   
   const [excelName, setExcelName] = useState<string | null>(() => localStorage.getItem('infinity_excel_name'));
   const [loadTime, setLoadTime] = useState<string | null>(null);
@@ -151,17 +154,24 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
   };
 
   const handleSourceSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setSourceName(file.name);
-      const path = (file as any).path;
-      if (path) {
-        setSourcePath(path);
-        addLog(`${t('selected_file_success')}: ${file.name}`, 'success');
-      } else {
-        addLog(t('resolve_path_error'), "error");
-      }
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const resolvedFiles = files
+      .map(file => ({ name: file.name, path: (file as any).path }))
+      .filter(file => Boolean(file.path));
+
+    if (resolvedFiles.length === files.length) {
+      setSourceFiles(resolvedFiles);
+      const fileLabel = resolvedFiles.length === 1
+        ? resolvedFiles[0].name
+        : `${resolvedFiles.length} ${t('files_count').toLowerCase()}`;
+      addLog(`${t('selected_file_success')}: ${fileLabel}`, 'success');
+    } else {
+      addLog(t('resolve_path_error'), "error");
     }
+
+    e.target.value = "";
   };
 
   const selectOutputDir = async () => {
@@ -174,7 +184,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
   const runSmartProcessing = async () => {
     if (state.isProcessing) return;
     
-    if (!sourcePath) {
+    if (sourceFiles.length === 0) {
         addLog(t('resolve_path_error'), "error");
         return;
     }
@@ -185,7 +195,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
     try {
       if ((window as any).electron) {
         const result = await (window as any).electron.processMultiPDF({
-          sourcePath: sourcePath,
+          sourcePaths: sourceFiles.map(file => file.path),
           recipients: Array.from(selectedItems),
           watermark: {
             ...watermark,
@@ -212,14 +222,16 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
         }
       } else {
         const students: string[] = Array.from(selectedItems);
-        const totalSteps = students.length;
-        for (let i = 0; i < totalSteps; i++) {
+        const totalSteps = Math.max(students.length, 1) * sourceFiles.length;
+        for (let fileIndex = 0; fileIndex < sourceFiles.length; fileIndex++) {
+          for (let i = 0; i < Math.max(students.length, 1); i++) {
           const student = students[i];
-          const progress = Math.floor(((i + 1) / totalSteps) * 100);
+          const progress = Math.floor((((fileIndex * Math.max(students.length, 1)) + i + 1) / totalSteps) * 100);
           setState(prev => ({ ...prev, progress }));
-          await aiService.generateRecipientToken(student);
-          addLog(`[${i + 1}/${totalSteps}] ${t('generate')} ${student}`, 'success');
+          if (student) await aiService.generateRecipientToken(student);
+          addLog(`[${(fileIndex * Math.max(students.length, 1)) + i + 1}/${totalSteps}] ${t('generate')} ${sourceFiles[fileIndex].name}${student ? ` - ${student}` : ''}`, 'success');
           await new Promise(r => setTimeout(r, 100));
+          }
         }
         setState(prev => ({ ...prev, progress: 100, isProcessing: false, completed: true }));
       }
@@ -333,14 +345,19 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
         <div className="liquid-glass rounded-[1.5rem] p-4 border border-white/5 shrink-0">
           <h3 className="text-center text-[0.625em] font-bold uppercase tracking-widest mb-4 text-white/50">{t('source_file')}</h3>
           
-          {sourceName ? (
+          {sourceFiles.length > 0 ? (
             <div className="text-center">
               <div className="flex justify-between items-start mb-4 px-2">
                 <div className="text-left overflow-hidden mr-2">
-                   <p className="text-[0.6875em] text-white/70 font-bold truncate"><span className="text-white/40 font-normal">{t('name_label')}</span> {sourceName}</p>
+                   <p className="text-[0.6875em] text-white/70 font-bold truncate">
+                     <span className="text-white/40 font-normal">{t('name_label')}</span> {sourceFiles.length === 1 ? sourceFiles[0].name : `${sourceFiles.length} ${t('files_count').toLowerCase()}`}
+                   </p>
+                   {sourceFiles.length > 1 && (
+                     <p className="mt-1 text-[0.5625em] text-white/35 truncate">{sourceFiles.map(file => file.name).join(', ')}</p>
+                   )}
                 </div>
                 <button 
-                  onClick={() => { setSourceName(""); setSourcePath(""); }}
+                  onClick={() => setSourceFiles([])}
                   className="px-3 py-1.5 rounded-lg bg-[#cc4455] text-white text-[0.5625em] font-bold uppercase tracking-widest hover:bg-[#b33a4a] transition-all"
                 >
                   {t('delete_label')}
@@ -358,7 +375,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               <span className="text-[0.5625em] font-bold text-white/20 uppercase tracking-widest">{t('select_file')}</span>
             </div>
           )}
-          <input ref={fileInputRef} type="file" className="hidden" accept=".pptx,.pdf" onChange={handleSourceSelect} />
+          <input ref={fileInputRef} type="file" className="hidden" accept=".pptx,.pdf" multiple onChange={handleSourceSelect} />
         </div>
 
         <div className="liquid-glass rounded-[1.5rem] p-4 border border-white/5 flex-1 flex flex-col gap-3 overflow-hidden">
@@ -473,7 +490,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
           <div className="flex-1 bg-white/[0.02] rounded-[1.5rem] border border-white/5 flex flex-col items-center justify-center relative overflow-hidden">
              <div className="text-center opacity-30 select-none">
                 <p className="text-lg font-bold mb-1 text-white/60">{t('preview_placeholder')}</p>
-                <p className="text-[0.625em] uppercase tracking-widest font-bold text-white/40">{t('file_label')} {sourceName || '...'}</p>
+                <p className="text-[0.625em] uppercase tracking-widest font-bold text-white/40">{t('file_label')} {sourceFiles.length === 0 ? '...' : sourceFiles.length === 1 ? sourceFiles[0].name : `${sourceFiles.length} ${t('files_count').toLowerCase()}`}</p>
              </div>
              
              {(watermark.enabled ?? true) && (
@@ -518,8 +535,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               onClick={state.completed 
                 ? () => {
                     setState(prev => ({ ...prev, progress: 0, completed: false, isProcessing: false }));
-                    setSourceName("");
-                    setSourcePath("");
+                    setSourceFiles([]);
                   }
                 : selectOutputDir
               }
@@ -534,7 +550,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               }
             </button>
             <button 
-              disabled={state.isProcessing || !sourcePath}
+              disabled={state.isProcessing || sourceFiles.length === 0}
               onClick={state.completed ? (() => (window as any).electron?.openPath(outputDir)) : runSmartProcessing}
               className={`py-4 rounded-full text-white text-[0.625em] font-bold uppercase tracking-widest transition-all active:scale-95 ${state.completed ? 'bg-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 'bg-blue-600 hover:bg-blue-700 shadow-[0_0_25px_rgba(59,130,246,0.3)]'} disabled:opacity-20`}
             >

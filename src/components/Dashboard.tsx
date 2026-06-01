@@ -16,7 +16,7 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
     <div className="h-full flex flex-col items-center justify-start pt-12 p-4">
       <div className="mb-6 text-center max-w-4xl mx-auto px-4 overflow-visible">
         {/* Added overflow-visible and slightly more line-height to ensure 'Possibilities' is never clipped. */}
-        <h1 className="text-5xl font-bold mb-4 tracking-tight leading-[1.3] py-2 bg-gradient-to-b from-white to-white/40 bg-clip-text text-transparent overflow-visible">
+        <h1 className="text-5xl font-bold mb-4 tracking-tight leading-[1.3] py-2 text-white overflow-visible">
           {t('welcome_title')}
         </h1>
         <p className="text-white/40 text-lg max-w-lg mx-auto">

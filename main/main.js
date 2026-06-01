@@ -22,9 +22,9 @@ function createWindow() {
     },
   });
 
-  const startUrl = isDev
+  const startUrl = process.env.INFINITYPDF_RENDERER_URL || (isDev
     ? "http://localhost:3000"
-    : `file://${path.join(__dirname, "../build/index.html")}`;
+    : `file://${path.join(__dirname, "../build/index.html")}`);
 
   console.log("Loading URL:", startUrl);
   console.log("isDev:", isDev);
@@ -79,7 +79,7 @@ ipcMain.handle("save-file-dialog", async (event, options) => {
 // Core Logic: Batch PDF Watermarking (PPTX -> PDF with Watermark via Python)
 ipcMain.handle(
   "process-multi-pdf",
-  async (event, { sourcePath, recipients, watermark, outputDir, namingPattern }) => {
+  async (event, { sourcePath, sourcePaths, recipients, watermark, outputDir, namingPattern }) => {
     try {
       const { spawn } = require("child_process");
 
@@ -87,10 +87,17 @@ ipcMain.handle(
         await fs.ensureDir(outputDir);
       }
 
+      const inputPaths = Array.isArray(sourcePaths)
+        ? sourcePaths.filter(Boolean)
+        : (sourcePath ? [sourcePath] : []);
+
+      if (inputPaths.length === 0) {
+        throw new Error("No source files provided");
+      }
+
       // If no recipients selected, treat as simple conversion (1 file, no watermark, no prefix)
       // We pass a single empty string as recipient name, and disable watermark
       let targetRecipients = recipients;
-      let isSingleMode = false;
       const hasCustomRecipient = Boolean(watermark?.customWatermarkText?.trim());
       
       if (!recipients || recipients.length === 0) {
@@ -100,7 +107,6 @@ ipcMain.handle(
           targetRecipients = [""]; // Dummy recipient for single pass
           watermark.enabled = false; // Force disable watermark
         }
-        isSingleMode = true;
       } else {
         // Normal mode: ensure watermark enabled flag matches UI or default
         if (watermark.enabled === undefined) watermark.enabled = true;
@@ -108,19 +114,20 @@ ipcMain.handle(
 
       // Prepare data for Python backend
       const studentList = { students: targetRecipients.map(name => ({ name })) };
-      
-      return new Promise((resolve, reject) => {
+
+      const runBackendForSource = (currentSourcePath, sourceIndex) => new Promise((resolve, reject) => {
         let executor, args;
+        const sourceWatermark = { ...watermark };
 
         if (app.isPackaged) {
           // Production: Use bundled EXE
           executor = path.join(process.resourcesPath, "InfinityPDF-backend.exe");
           args = [
             "multi-pdf",
-            sourcePath,
+            currentSourcePath,
             outputDir,
             JSON.stringify(studentList),
-            JSON.stringify(watermark)
+            JSON.stringify(sourceWatermark)
           ];
         } else {
           // Development: Use python command
@@ -128,10 +135,10 @@ ipcMain.handle(
           args = [
             path.join(__dirname, "../backend.py"),
             "multi-pdf",
-            sourcePath,
+            currentSourcePath,
             outputDir,
             JSON.stringify(studentList),
-            JSON.stringify(watermark)
+            JSON.stringify(sourceWatermark)
           ];
         }
 
@@ -151,9 +158,13 @@ ipcMain.handle(
           stdout += text;
           
           // Parse progress updates
-          const progressMatch = text.match(/PROGRESS:(\d+)/);
-          if (progressMatch) {
-            mainWindow.webContents.send("process-progress", parseInt(progressMatch[1]));
+          for (const progressMatch of text.matchAll(/PROGRESS:(\d+)/g)) {
+            const sourceProgress = parseInt(progressMatch[1], 10);
+            const overallProgress = Math.min(
+              100,
+              Math.floor(((sourceIndex + (sourceProgress / 100)) / inputPaths.length) * 100)
+            );
+            mainWindow.webContents.send("process-progress", overallProgress);
           }
         });
 
@@ -188,6 +199,18 @@ ipcMain.handle(
           reject(err);
         });
       });
+
+      const combinedResults = [];
+      for (let i = 0; i < inputPaths.length; i++) {
+        const result = await runBackendForSource(inputPaths[i], i);
+        if (result && result.success === false) {
+          throw new Error(result.error || "PPTX conversion failed");
+        }
+        combinedResults.push(...(result.results || []));
+      }
+
+      mainWindow.webContents.send("process-progress", 100);
+      return { success: true, results: combinedResults, outputDir };
     } catch (err) {
       return { success: false, error: err.message };
     }
