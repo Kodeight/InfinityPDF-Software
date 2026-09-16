@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ToolState } from '../../types';
 import ProgressBar from '../ProgressBar';
 import { NewToolDef, ToolParam } from './toolDefs';
+import { previewSrc } from './preview';
 
 interface Props {
   def: NewToolDef;
@@ -35,7 +36,6 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
   const [previewKey, setPreviewKey] = useState(0);
   const [regions, setRegions] = useState<{ x0: number; y0: number; x1: number; y1: number }[]>([]);
   const [pageSel, setPageSel] = useState<number[]>([]);
-  const [metaForm, setMetaForm] = useState<Record<string, string>>({});
   const [sigStrokes, setSigStrokes] = useState<number[][][]>([]);
   const [measure, setMeasure] = useState<any>({ mode: 'line', calib: null, calibReal: '', calibUnit: 'cm', items: [] });
   const [dataRows, setDataRows] = useState<any[]>([]);
@@ -54,17 +54,18 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
   const mainFiles: LoadedFile[] = filesByInput[def.inputs[0]?.key] || [];
   const mainPaths = mainFiles.map((f) => f.path);
   const param = (key: string) => params[`${opName}.${key}`];
-  const setParam = (key: string, v: any) => setParams((p) => ({ ...p, [`${opName}.${key}`]: v }));
 
   // Progress subscription (filtered by job id).
   useEffect(() => {
+    let off: (() => void) | undefined;
     if (el()?.onNewToolProgress) {
-      el().onNewToolProgress((msg: any) => {
+      off = el().onNewToolProgress((msg: any) => {
         if (msg && msg.jobId === jobRef.current) {
           setState((prev) => ({ ...prev, progress: msg.value }));
         }
       });
     }
+    return () => { if (off) off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -202,7 +203,7 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
         setState((p) => ({ ...p, progress: 100, isProcessing: false, completed: true }));
         addLog(`${op?.label || operation} finished (${(res.outputs || []).length} output(s)).`, 'success');
         const img = (res.outputs || []).find((o: string) => IMG_EXT.test(o));
-        if (img && (def.preview || def.measure)) { setPreviewImg(img); setPreviewKey((k) => k + 1); }
+        if (img && (def.preview || def.measure)) { setPreviewImg(await previewSrc(img)); setPreviewKey((k) => k + 1); }
       }
       return res;
     } catch (e: any) {
@@ -215,7 +216,9 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
     }
   };
 
-  const runJobOnce = async (operation: string, extra: Record<string, any>, targets: string[]) => {
+  // Batch progress is driven by the caller's file index, never by rendered
+  // state (which would be a stale closure inside the async loop).
+  const runJobOnce = async (operation: string, extra: Record<string, any>, targets: string[], idx: number, total: number) => {
     if (!el()?.runNewTool) { addLog('This tool needs the desktop app.', 'error'); return null; }
     const jobId = nextJobId();
     jobRef.current = jobId;
@@ -229,7 +232,7 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
         return null;
       }
       setOutFiles((o) => [...o, ...(res.outputs || [])]);
-      setState((p) => ({ ...p, progress: Math.round(((outFiles.length + (res.outputs || []).length) / Math.max(mainPaths.length, 1)) * 100) }));
+      setState((p) => ({ ...p, progress: Math.round(((idx + 1) / Math.max(total, 1)) * 100) }));
       return res;
     } catch (e: any) { addLog(`Error: ${e.message}`, 'error'); return null; }
   };
@@ -257,14 +260,21 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
   const isBatchOp = () => mainPaths.length > 1 && ['compress', 'convert', 'extract', 'flatten', 'clean', 'repair', 'info', 'inspect', 'analyze', 'ocr'].includes(opName);
 
   const runBatchWith = async (extra: Record<string, any>) => {
+    let failures = 0;
     for (let i = 0; i < mainPaths.length; i++) {
       if (cancelling) { addLog('Cancelled.', 'info'); break; }
       setState((p) => ({ ...p, progress: Math.round((i / mainPaths.length) * 100) }));
-      await runJobOnce(opName, extra, [mainPaths[i]]);
+      const res = await runJobOnce(opName, extra, [mainPaths[i]], i, mainPaths.length);
+      if (!res) failures += 1;
     }
     setCancelling(false);
-    setState((p) => ({ ...p, progress: 100, completed: true }));
-    addLog('Batch finished.', 'success');
+    if (cancelling) {
+      setState((p) => ({ ...p, progress: 0, completed: false }));
+      return;
+    }
+    setState((p) => ({ ...p, progress: 100, completed: failures < mainPaths.length }));
+    addLog(failures === 0 ? 'Batch finished.' : `Batch finished with ${failures} failure(s).`,
+      failures === 0 ? 'success' : 'error');
   };
 
   // Tool-specific arg assembly (regions, signatures, certs, renamer, forms...).
@@ -356,7 +366,7 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
   const refreshPreview = async () => {
     if (!def.preview || !mainPaths[0]) return;
     const res = await runJob(def.preview.op, { pdf: mainPaths[0], page: previewPage, dpi: previewDpi() }, true);
-    if (res?.outputs?.[0]) { setPreviewImg(res.outputs[0]); setPreviewKey((k) => k + 1); setRegions([]); }
+    if (res?.outputs?.[0]) { setPreviewImg(await previewSrc(res.outputs[0])); setPreviewKey((k) => k + 1); setRegions([]); }
   };
 
   useEffect(() => {
@@ -791,7 +801,7 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
               {previewImg ? (
                 <div ref={overlayRef} onPointerDown={onOverlayDown} onPointerMove={onOverlayMove} onPointerUp={onOverlayUp}
                   className="relative rounded-xl overflow-hidden border border-white/10 touch-none select-none cursor-crosshair">
-                  <img key={previewKey} ref={imgRef} src={`file://${previewImg}`} alt="preview" className="w-full block pointer-events-none" draggable={false} />
+                  <img key={previewKey} ref={imgRef} src={previewImg} alt="preview" className="w-full block pointer-events-none" draggable={false} />
                   <svg className="absolute inset-0 w-full h-full pointer-events-none">
                     {regions.map((r, i) => (
                       <rect key={i} x={Math.min(r.x0, r.x1)} y={Math.min(r.y0, r.y1)} width={Math.abs(r.x1 - r.x0)} height={Math.abs(r.y1 - r.y0)}

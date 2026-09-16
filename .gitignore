@@ -50,3 +50,6 @@ output_cli_test.pdf
 dummy*.pdf
 test_image.jpg
 __pycache__/
+# Local outputs and heavyweight one-off binaries (kept on disk, not in git)
+InfinityPDF_Output/
+vs_BuildTools.exe

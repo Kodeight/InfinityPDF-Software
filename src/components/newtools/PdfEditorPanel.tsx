@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ToolState } from '../../types';
 import ProgressBar from '../ProgressBar';
+import { previewSrc } from './preview';
 
 interface Props {
   state: ToolState;
@@ -39,8 +40,7 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
   const [pageSize, setPageSize] = useState({ w: 612, h: 792 });
   const [tool, setTool] = useState('select');
   const [objects, setObjects] = useState<EditObj[]>([]);
-  const [redoStack, setRedoStack] = useState<EditObj[][]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [, setRedoStack] = useState<EditObj[][]>([]);
   const [fontSize, setFontSize] = useState(18);
   const [color, setColor] = useState('#111111');
   const [pageOps, setPageOps] = useState<any[]>([]);
@@ -55,11 +55,13 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
   const [imgPick, setImgPick] = useState('');
 
   useEffect(() => {
+    let off: (() => void) | undefined;
     if (el()?.onNewToolProgress) {
-      el().onNewToolProgress((msg: any) => {
+      off = el().onNewToolProgress((msg: any) => {
         if (msg && msg.jobId === jobRef.current) setState((p) => ({ ...p, progress: msg.value }));
       });
     }
+    return () => { if (off) off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -106,18 +108,30 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
     inp.click();
   };
 
-  const renderPage = async (pg: number, d: number) => {
+  // Debounced preview: rapid page/dpi changes render only the latest state;
+  // stale responses are discarded instead of overwriting the current view.
+  const renderSeq = useRef(0);
+  const renderTimer = useRef<any>(null);
+  const renderPage = useCallback(async (pg: number, d: number) => {
     if (!pdfPath) return;
+    const seq = ++renderSeq.current;
     const res = await runBackend('render', { pdf: pdfPath, page: pg, dpi: d }, true);
+    if (renderSeq.current !== seq) return; // a newer render was requested
     if (res?.outputs?.[0]) {
-      setImg(res.outputs[0]);
+      setImg(await previewSrc(res.outputs[0]));
       setImgKey((k) => k + 1);
       setPages(res.info?.pages || 1);
       if (res.info?.w_pt) setPageSize({ w: res.info.w_pt, h: res.info.h_pt });
     }
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfPath, outDir]);
 
-  useEffect(() => { if (pdfPath) renderPage(page, dpi); /* eslint-disable-next-line */ }, [pdfPath, page, dpi]);
+  useEffect(() => {
+    if (!pdfPath) return;
+    if (renderTimer.current) clearTimeout(renderTimer.current);
+    renderTimer.current = setTimeout(() => { renderPage(page, dpi); }, 250);
+    return () => { if (renderTimer.current) clearTimeout(renderTimer.current); };
+  }, [pdfPath, page, dpi, renderPage]);
 
   const k = () => 72 / dpi; // display-px -> pdf-pt (preview rendered at dpi)
   const toPts = (x: number, y: number) => {
@@ -307,7 +321,7 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
             <div ref={overlayRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
               className="relative rounded-xl overflow-hidden border border-white/10 touch-none select-none"
               style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}>
-              <img key={imgKey} src={`file://${img}`} alt="page" className="w-full block pointer-events-none" draggable={false} />
+              <img key={imgKey} src={img} alt="page" className="w-full block pointer-events-none" draggable={false} />
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
                 {cur.map((o) => (
                   <g key={o.uid} opacity={0.9}>

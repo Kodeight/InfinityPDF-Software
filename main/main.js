@@ -1,7 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs-extra");
-const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
 
 // Check if we're in development mode based on environment or app path
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
@@ -15,6 +14,32 @@ let mainWindow;
 let activeMultiPdfProcess = null;
 let multiPdfCancelled = false;
 let multiPdfCancelFile = null;
+
+// Single-flight tracking for the security/universal converters so their
+// long runs can actually be stopped (same pattern as multi-pdf).
+let activeSecurityProcess = null;
+let securityCancelled = false;
+let activeUniversalProcess = null;
+let universalCancelled = false;
+
+// Shared child-process termination (taskkill tree on Windows).
+function killProcessTree(proc) {
+  if (!proc || proc.killed) return;
+  try {
+    if (process.platform === "win32" && proc.pid) {
+      const { execSync } = require("child_process");
+      try {
+        execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: "ignore" });
+      } catch (e) {
+        try { proc.kill("SIGKILL"); } catch (e2) {}
+      }
+    } else {
+      proc.kill("SIGTERM");
+    }
+  } catch (e) {
+    console.error("Kill process error:", e);
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -60,6 +85,22 @@ app.on("window-all-closed", () => {
       activeMultiPdfProcess.kill();
     }
   } catch (e) {}
+  // New-tools children are tracked per job; kill them too so no Python
+  // backend survives application quit.
+  try {
+    for (const job of activeNewToolJobs.values()) {
+      try {
+        if (job && job.process && !job.process.killed) job.process.kill();
+      } catch (e) {}
+    }
+    activeNewToolJobs.clear();
+  } catch (e) {}
+  try {
+    killProcessTree(activeSecurityProcess);
+    killProcessTree(activeUniversalProcess);
+    activeSecurityProcess = null;
+    activeUniversalProcess = null;
+  } catch (e) {}
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -77,11 +118,21 @@ ipcMain.handle("select-directory", async () => {
 });
 
 ipcMain.handle("open-path", async (event, folderPath) => {
-  if (folderPath) {
-    shell.openPath(folderPath);
-    return true;
+  // Only open existing local paths; never blindly forward arbitrary input
+  // (which could otherwise reach URLs or non-existent targets silently).
+  if (typeof folderPath !== "string" || !folderPath) {
+    return false;
   }
-  return false;
+  try {
+    if (!fs.existsSync(folderPath)) {
+      return false;
+    }
+    await shell.openPath(folderPath);
+    return true;
+  } catch (err) {
+    console.error("Open path error:", err);
+    return false;
+  }
 });
 
 ipcMain.handle("save-file-dialog", async (event, options) => {
@@ -298,6 +349,30 @@ ipcMain.handle("cancel-multi-pdf", async () => {
   }
 });
 
+// Cancellation for the security converter (single-flight like multi-pdf).
+ipcMain.handle("cancel-security", async () => {
+  try {
+    securityCancelled = true;
+    killProcessTree(activeSecurityProcess);
+    activeSecurityProcess = null;
+    return { success: true, cancelled: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Cancellation for the universal converter (single-flight like multi-pdf).
+ipcMain.handle("cancel-universal", async () => {
+  try {
+    universalCancelled = true;
+    killProcessTree(activeUniversalProcess);
+    activeUniversalProcess = null;
+    return { success: true, cancelled: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 // Core Logic: Apply PDF Security Permissions
 ipcMain.handle(
   "apply-pdf-security",
@@ -324,12 +399,15 @@ ipcMain.handle(
 
       if (!actualInputPath) throw new Error("No input file provided");
 
-      const baseName = fileName || path.basename(actualInputPath);
+      // Sanitize the renderer-provided file name so it cannot escape the
+      // output directory (basename strips any ../ segments).
+      const baseName = path.basename(fileName || path.basename(actualInputPath));
       const outputFileName = baseName.startsWith("SECURED_") ? baseName : `SECURED_${baseName}`;
       const outputPath = path.join(outputDir, outputFileName);
 
       console.log("Processing PDF with permissions:", permissions);
 
+      securityCancelled = false;
       return new Promise((resolve, reject) => {
         let executor, args;
 
@@ -342,6 +420,7 @@ ipcMain.handle(
         }
 
         const pythonProcess = spawn(executor, args);
+        activeSecurityProcess = pythonProcess;
 
         let stdout = "";
         let stderr = "";
@@ -353,12 +432,20 @@ ipcMain.handle(
         });
 
         pythonProcess.on("error", (err) => {
+          activeSecurityProcess = null;
           console.error("Spawn error:", err);
-          reject(err);
+          if (securityCancelled) {
+            resolve({ success: false, cancelled: true });
+          } else {
+            reject(err);
+          }
         });
 
         pythonProcess.on("close", (code) => {
-          if (code === 0 && fs.existsSync(outputPath)) {
+          activeSecurityProcess = null;
+          if (securityCancelled) {
+            resolve({ success: false, cancelled: true });
+          } else if (code === 0 && fs.existsSync(outputPath)) {
             resolve({
               success: true,
               path: outputPath,
@@ -417,6 +504,8 @@ ipcMain.handle(
         }
 
         const pythonProcess = spawn(executor, args);
+        activeUniversalProcess = pythonProcess;
+        universalCancelled = false;
 
         let stdout = "";
         let stderr = "";
@@ -430,8 +519,23 @@ ipcMain.handle(
           console.error("Backend stderr:", data.toString());
         });
 
+        // Without this, a spawn failure (missing python/EXE) never settles
+        // the invoke and the UI hangs. Resolve like the outer catch block.
+        pythonProcess.on("error", (err) => {
+          activeUniversalProcess = null;
+          console.error("Backend spawn error:", err);
+          if (universalCancelled) {
+            resolve({ success: false, cancelled: true });
+          } else {
+            resolve({ success: false, error: `Failed to start conversion backend: ${err.message}` });
+          }
+        });
+
         pythonProcess.on("close", (code) => {
-          if (code === 0) {
+          activeUniversalProcess = null;
+          if (universalCancelled) {
+            resolve({ success: false, cancelled: true });
+          } else if (code === 0) {
              try {
                 // Try to parse the last line as JSON result
                 const lines = stdout.trim().split('\n');
@@ -511,10 +615,25 @@ function resolveNewToolModule(tool) {
 }
 
 ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, outputDir }) => {
-  const id = String(jobId || `job_${Date.now()}`);
+  // Strict input validation: jobId ends up in a temp flag filename, so it
+  // must not contain path separators or traversal sequences.
+  let id = String(jobId || "");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+    id = `job_${Date.now()}`;
+  }
   const mod = String(tool || "");
   if (!NEW_TOOL_MODULES.includes(mod) || !/^[a-z_]+$/.test(mod)) {
     return { success: false, error: `Unknown tool: ${mod}` };
+  }
+  const op = String(operation || "");
+  if (!/^[a-z_]+$/.test(op) || op.length > 64) {
+    return { success: false, error: `Unknown operation: ${op}` };
+  }
+  if (args !== undefined && (typeof args !== "object" || args === null || Array.isArray(args))) {
+    return { success: false, error: "Invalid arguments: object expected" };
+  }
+  if (outputDir !== undefined && typeof outputDir !== "string") {
+    return { success: false, error: "Invalid output directory" };
   }
   try {
     const { spawn } = require("child_process");
@@ -523,9 +642,25 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
     const outDir = outputDir || path.join(os.tmpdir(), `InfinityPDF_${mod}`);
     await fs.ensureDir(outDir);
 
-    const modulePath = resolveNewToolModule(mod);
-    if (!fs.existsSync(modulePath)) {
-      return { success: false, error: `Backend module not found for tool: ${mod}` };
+    // Executor selection: packaged app uses the frozen newtools-backend.exe
+    // (no Python interpreter ships with the installer); development uses
+    // the plain interpreter + module so edits apply without rebuilding.
+    let executor;
+    let spawnArgs;
+    if (app.isPackaged) {
+      const runnerExe = path.join(process.resourcesPath, "newtools-backend.exe");
+      if (!fs.existsSync(runnerExe)) {
+        return { success: false, error: "New-tools backend is not installed with this package." };
+      }
+      executor = runnerExe;
+      spawnArgs = [mod, op, JSON.stringify(args || {}), outDir];
+    } else {
+      const modulePath = resolveNewToolModule(mod);
+      if (!fs.existsSync(modulePath)) {
+        return { success: false, error: `Backend module not found for tool: ${mod}` };
+      }
+      executor = "python";
+      spawnArgs = [modulePath, op, JSON.stringify(args || {}), outDir];
     }
 
     const cancelFile = path.join(os.tmpdir(), `newtool-cancel-${id}.flag`);
@@ -534,7 +669,7 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
     activeNewToolJobs.set(id, job);
 
     const result = await new Promise((resolve) => {
-      const proc = spawn("python", [modulePath, String(operation || ""), JSON.stringify(args || {}), outDir], {
+      const proc = spawn(executor, spawnArgs, {
         env: { ...process.env, NEWTOOL_CANCEL_FILE: cancelFile },
       });
       job.process = proc;
@@ -554,7 +689,7 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
       proc.stderr.on("data", (data) => { stderr += data.toString(); });
 
       proc.on("error", (err) => {
-        resolve({ success: false, error: `Failed to start Python backend (is Python installed?): ${err.message}` });
+        resolve({ success: false, error: `Failed to start new-tools backend: ${err.message}` });
       });
 
       proc.on("close", (code) => {
@@ -597,7 +732,8 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
 
 ipcMain.handle("cancel-new-tool", async (event, { jobId }) => {
   try {
-    const job = activeNewToolJobs.get(String(jobId || ""));
+    const lookup = /^[A-Za-z0-9_-]{1,64}$/.test(String(jobId || "")) ? String(jobId) : "";
+    const job = activeNewToolJobs.get(lookup);
     if (!job) return { success: true, note: "no active job" };
     job.cancelled = true;
     try { fs.ensureFileSync(job.cancelFile); } catch (e) {}
@@ -622,15 +758,79 @@ ipcMain.handle("cancel-new-tool", async (event, { jobId }) => {
   }
 });
 
+// Preview helper: read a local image file and return a data URL so <img>
+// panes work identically in dev (http:// origin, where file:// is blocked)
+// and in the packaged app. Size-capped; binary-safe (base64, no decoding).
+ipcMain.handle("get-file-data", async (event, { filePath }) => {
+  try {
+    if (typeof filePath !== "string" || !filePath) {
+      return { success: false, error: "Invalid path" };
+    }
+    let stat = null;
+    try {
+      stat = fs.statSync(filePath);
+    } catch (e) {
+      stat = null;
+    }
+    if (!stat || !stat.isFile()) {
+      return { success: false, error: "File not found" };
+    }
+    if (stat.size > 15 * 1024 * 1024) {
+      return { success: false, error: "File too large for preview (max 15 MB)" };
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".bmp": "image/bmp",
+      ".gif": "image/gif",
+    }[ext] || "application/octet-stream";
+    const data = await fs.readFile(filePath, { encoding: "base64" });
+    return { success: true, dataUrl: `data:${mime};base64,${data}` };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.handle("export-files", async (event, { sourcePaths, targetDir }) => {
   try {
-    for (const src of sourcePaths) {
-      if (fs.existsSync(src)) {
-        const dest = path.join(targetDir, path.basename(src));
-        await fs.copy(src, dest);
-      }
+    // Validate shapes and report honestly instead of silently skipping.
+    if (!Array.isArray(sourcePaths) || typeof targetDir !== "string" || !targetDir) {
+      return { success: false, error: "Invalid export arguments" };
     }
-    return { success: true };
+    if (sourcePaths.length > 500) {
+      return { success: false, error: "Too many files in a single export (max 500)" };
+    }
+    await fs.ensureDir(targetDir);
+    let copied = 0;
+    const skipped = [];
+    for (const src of sourcePaths) {
+      if (typeof src !== "string" || !src) {
+        skipped.push(String(src));
+        continue;
+      }
+      let stat = null;
+      try {
+        stat = fs.statSync(src);
+      } catch (e) {
+        stat = null;
+      }
+      // Only regular files are exported; directories/special files are out
+      // of scope for this helper and must not be copied recursively.
+      if (!stat || !stat.isFile()) {
+        skipped.push(src);
+        continue;
+      }
+      const dest = path.join(targetDir, path.basename(src));
+      await fs.copy(src, dest);
+      copied += 1;
+    }
+    if (copied === 0) {
+      return { success: false, error: "Nothing was exported", copied, skipped };
+    }
+    return { success: true, copied, skipped };
   } catch (err) {
     console.error("Export error:", err);
     return { success: false, error: err.message };

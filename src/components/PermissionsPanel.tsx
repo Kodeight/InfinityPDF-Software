@@ -25,6 +25,7 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
   const singleReplaceRef = useRef<HTMLInputElement>(null);
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const [permissions, setPermissions] = useState<PDFPermissions>(() => {
     const saved = localStorage.getItem('infinity_security_permissions');
@@ -52,7 +53,9 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
   }, []);
 
   const handleFiles = (newFileList: FileList | File[]) => {
-    const fileArray = Array.from(newFileList).filter(f => f.type === 'application/pdf');
+    // Electron/Windows often reports an empty MIME type, so accept by
+    // extension as well instead of rejecting valid PDFs.
+    const fileArray = Array.from(newFileList).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
     if (fileArray.length === 0) {
       if (Array.from(newFileList).length > 0) {
         addLog(t('invalid_pdf_format'), "error");
@@ -117,10 +120,19 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
     }
   };
 
+  const handleStop = async () => {
+    if (!state.isProcessing || cancelling) return;
+    setCancelling(true);
+    addLog(t('cancelling_generation'), 'info');
+    try {
+      await (window as any).electron?.cancelSecurity?.();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const runSecurityProcess = async () => {
-    addLog("DEBUG: runSecurityProcess called", "info");
     if (state.isProcessing || files.length === 0) {
-      addLog(`DEBUG: Guard hit. isProcessing=${state.isProcessing}, files.length=${files.length}`, "info");
       return;
     }
     if (!(window as any).electron) {
@@ -128,20 +140,21 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
       return;
     }
 
+    setCancelling(false);
     setState(prev => ({ ...prev, isProcessing: true, progress: 0, completed: false }));
     setGeneratedFiles([]);
-    addLog(`DEBUG: files.length=${files.length}`, "info");
     addLog(t('initializing_security'), "info");
 
     try {
-      addLog("DEBUG: Clearing temp...", "info");
       await (window as any).electron.clearSecurityTemp();
-      addLog("DEBUG: Temp cleared.", "info");
-      
-      let completedCount = 0;
+
+      let doneCount = 0;
+      let successCount = 0;
+      let wasCancelled = false;
       const paths: string[] = [];
 
       for (const file of files) {
+        if (wasCancelled) break;
         const filePath = (file as any).path;
         if (!filePath) {
           addLog(`Skipping ${file.name}: Path not found`, "error");
@@ -149,28 +162,55 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
         }
 
         addLog(`${t('securing')} ${file.name}...`, "info");
-        
+
         const result = await (window as any).electron.applyPdfSecurity({
           inputPath: (file as any).path,
           fileName: file.name,
           permissions: permissions
         });
 
+        if (result && (result as any).cancelled) {
+          wasCancelled = true;
+          break;
+        }
+
+        doneCount += 1;
+        const step = doneCount;
         if (result.success) {
-          completedCount++;
+          successCount++;
           paths.push(result.path);
-          setState(prev => ({ ...prev, progress: Math.round((completedCount / files.length) * 100) }));
         } else {
           addLog(`${t('error')} [${file.name}]: ${result.error}`, "error");
         }
+        setState(prev => ({ ...prev, progress: Math.round((step / files.length) * 100) }));
       }
 
+      setCancelling(false);
+      if (wasCancelled || cancelling) {
+        setGeneratedFiles([]);
+        setState(prev => ({ ...prev, progress: 0, isProcessing: false, completed: false }));
+        addLog(t('generation_cancelled'), 'info');
+        return;
+      }
+      if (successCount === 0) {
+        setGeneratedFiles([]);
+        setState(prev => ({ ...prev, isProcessing: false, completed: false }));
+        addLog(`${t('error')}: 0/${files.length}`, "error");
+        return;
+      }
       setGeneratedFiles(paths);
       setState(prev => ({ ...prev, progress: 100, isProcessing: false, completed: true }));
-      addLog(t('security_finished'), "success");
+      addLog(`${t('security_finished')} (${successCount}/${files.length})`, "success");
     } catch (err: any) {
-      addLog(`${t('error')}: ${err.message}`, "error");
-      setState(prev => ({ ...prev, isProcessing: false }));
+      setCancelling(false);
+      if (cancelling) {
+        setGeneratedFiles([]);
+        addLog(t('generation_cancelled'), 'info');
+        setState(prev => ({ ...prev, progress: 0, isProcessing: false, completed: false }));
+      } else {
+        addLog(`${t('error')}: ${err.message}`, "error");
+        setState(prev => ({ ...prev, isProcessing: false }));
+      }
     }
   };
 
@@ -327,14 +367,22 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
           )}
           
           <div className="flex gap-4">
-            <button 
-              disabled={state.isProcessing}
-              onClick={state.completed ? handleExport : runSecurityProcess}
-              className={`flex-1 py-5 rounded-2xl text-white text-[0.625em] font-bold uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-3 ${
-                state.completed ? 'bg-emerald-600 hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)]'
+            <button
+              disabled={state.completed ? false : (cancelling || (!state.isProcessing && files.length === 0))}
+              onClick={state.completed ? handleExport : (state.isProcessing ? handleStop : runSecurityProcess)}
+              className={`flex-1 py-5 rounded-2xl text-white text-[0.625em] font-bold uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-3 btn-centered ${
+                state.completed
+                  ? 'bg-emerald-600 hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
+                  : state.isProcessing
+                    ? (cancelling ? 'bg-white/10 border border-white/10 animate-pulse' : 'bg-[#cc4455] hover:bg-[#b33a4a]')
+                    : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)]'
               } disabled:opacity-20`}
             >
-              {state.completed ? t('export_results') : (files.length > 1 ? t('secure_all') : t('secure'))}
+              {state.completed
+                ? t('export_results')
+                : state.isProcessing
+                  ? (cancelling ? t('stopping') : t('stop'))
+                  : (files.length > 1 ? t('secure_all') : t('secure'))}
             </button>
           </div>
         </div>

@@ -1,84 +1,93 @@
-# PPTX to Personalized PDF Converter - User Guide
+# InfinityPDF — User Guide
 
-## Overview
-This desktop application converts PowerPoint presentations (.pptx) into personalized, permission-locked PDF files for each student in your class. Each PDF includes the student's name as a semi-transparent watermark on every page, and permissions are set to allow only printing.
+## What is InfinityPDF?
 
-## Installation
-1. Ensure you have Node.js and Python installed on your system.
-2. Clone or download the project files.
-3. Install dependencies:
-   ```
-   npm install
-   pip install -r requirements.txt
-   ```
-4. Run the application:
-   ```
-   npm start
-   ```
+A Windows desktop app for working with PDFs: generate personalized PDFs,
+lock down permissions, convert between formats, and use 25 extra tools for
+organizing, compressing, editing, extracting, scanning/OCR, signing, forms,
+privacy cleanup, and measurement.
 
-## Step-by-Step Usage
+## The three core tools
 
-### 1. Upload Student List
-- Click "Upload Student Sheet" in the left panel.
-- Select a CSV or Excel (.xlsx) file containing student information.
-- The file must include a column named "name" (case-insensitive).
-- Optional columns: "id", "class", "email".
-- The list will be stored locally and reused for future conversions until replaced.
+### 1. Multi-PDF Generator (schools & organizations)
 
-### 2. Upload PPTX File
-- Click "Upload PPTX" in the center panel.
-- Select your PowerPoint presentation file.
-- Adjust watermark options if desired:
-  - Spacing: Distance between watermark repetitions (pixels)
-  - Rotation: Angle of watermark text (degrees)
-  - Font Size: Size of watermark text (points)
-- Opacity is fixed at 50% for readability.
+1. Import an Excel list of recipients (first column = names).
+2. Tick the recipients to include.
+3. Choose the source PPTX or PDF.
+4. Tune the watermark (text, rotation, size, opacity, position) and the
+   PDF permissions (printing, copying, editing…).
+5. Pick an output folder, then **Generate**.
 
-### 3. Preview
-- In the right panel, select a student from the dropdown.
-- Toggle "Show Watermark" to preview how the watermark will appear.
-- This gives you an idea of placement and visibility.
+While generation runs, the button becomes **Stop** — pressing it really
+cancels the backend (no extra files are started, temp files are cleaned).
+Afterwards the button returns to **Generate**; when finished it offers
+**Open Folder**.
 
-### 4. Generate PDFs
-- Click "Browse" to select the output folder where PDFs will be saved.
-- Click "Generate All" to start the conversion process.
-- Monitor progress in the bottom panel.
-- PDFs will be created in a new subfolder within your selected directory.
+### 2. PDF Security
 
-## Output
-- Each student gets a personalized PDF named `{Student Name} - {Original PPTX Name}.pdf`
-- File names are sanitized to remove special characters.
-- PDFs are permission-locked: printing allowed, copying/editing disabled.
-- A random owner password is generated for each PDF (displayed in status).
+Drop in PDFs, choose what recipients may do (print / copy / edit /
+restructure / fill forms / comment), then **Secure**. Each file is saved as
+a new `SECURED_…pdf`; originals are never overwritten. Long batches can be
+stopped with **Stop**. Use **Export** to copy results to a folder you pick.
 
-## CLI Usage (Optional)
-For batch processing without the GUI:
+### 3. Universal Converter
 
-```
-python python/batch_cli.py presentation.pptx students.csv output_folder [options]
-```
+Drop in files, pick the target format (PDF, DOCX, PPTX, JPG, PNG…), then
+**Convert**. Files already in the target format are skipped. Conversions
+can be stopped with **Stop**; if nothing could be converted the app says so
+instead of pretending success. DOCX → PDF keeps Arabic text, RTL direction
+and tables (requires Microsoft Word).
 
-Options:
-- `--spacing`: Watermark spacing (default: 100)
-- `--rotation`: Watermark rotation (default: 30)
-- `--font-size`: Watermark font size (default: 36)
+## More Tools (25)
 
-## Security & Privacy Notes
-- Student data is stored locally using electron-store.
-- PDFs are encrypted with owner passwords to prevent unauthorized copying.
-- Clear stored student lists when finished using "Clear Stored List".
-- Generated PDFs contain personal data - handle appropriately.
+Open them from the dashboard grid (grouped by category) or the
+**More Tools** menu in the top bar. Every tool follows the same pattern:
+
+1. Load input file(s) with **Browse**.
+2. Pick the operation and set its options.
+3. For visual tools, check the preview and drag regions on it.
+4. Press **Run** (long operations show progress and a **Stop** button).
+5. **Open** individual outputs or **Export** them all to a folder you pick.
+
+Categories: Generate (certificates, batch rename) · Convert (PDF ↔ images /
+text / Word / Excel) · Edit (editor, organizer, crop, snapshot, flatten) ·
+Optimize (compress, repair, blank pages) · Extract (info, images, tables) ·
+Scan (OCR, scan-to-PDF) · Sign & Forms · Privacy (metadata, redaction) ·
+Technical (measurement).
+
+Notes:
+
+- The **PDF Editor** annotates pages (text, shapes, drawing, highlights,
+  images) and manages pages; saving always writes a new file.
+- **Redaction** truly removes content (not black boxes); review before apply.
+- **Signatures** are visual only, not cryptographic digital signatures.
+- **OCR** needs Tesseract OCR installed; without it the tool tells you
+  exactly what is missing.
+- **Scan to PDF** works from image files (phone/camera scans); direct
+  scanner drivers are not bundled.
+- Metadata cleaning covers handled structures; it cannot guarantee every
+  hidden byte is gone.
+
+## Language
+
+Switch languages (EN/FR/DE/ES/IT/PT/AR) in the top bar. Arabic content and
+right-to-left documents are supported throughout conversion and extraction.
 
 ## Troubleshooting
-- Ensure PPTX files are not corrupted.
-- Check that student CSV has a "name" column.
-- Verify Python dependencies are installed.
-- If generation fails, check console for error messages.
 
-## Requirements
-- Node.js 14+
-- Python 3.7+
-- Windows/Mac/Linux (cross-platform)
+- **Office conversions fail** → install Microsoft Word/PowerPoint/Excel;
+  pure-PDF features do not need Office.
+- **OCR unavailable** → install Tesseract OCR (+ ocrmypdf for searchable PDFs).
+- **A file will not open** → it may be corrupted; try the **PDF Repair** tool.
+- **Nothing was produced** → the app reports `0/N` instead of fake success;
+  check the per-file error lines.
+- **App feels stuck during a long job** → use **Stop**; progress and cancel
+  are wired to the real backend process.
+- **Build runs out of memory** (developers) → retry with
+  `GENERATE_SOURCEMAP=false`.
 
-## Support
-For issues or questions, check the console output for error details or contact the developer.
+## Privacy
+
+Everything runs locally on your machine. Recipient lists stay in local app
+storage; outputs are written only to folders you choose. Treat generated
+personalized PDFs as personal data.

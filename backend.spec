@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+
 block_cipher = None
 
 a = Analysis(
@@ -15,7 +17,20 @@ a = Analysis(
         'pypdf',
         'pypdf._encryption',
         'PIL',
-    ],
+        # universal-convert paths (verified missing from the packaged EXE:
+        # PDF->DOCX failed with "pdf2docx library not installed")
+        'fitz',
+        'pdf2docx',
+        'docx',
+        'openpyxl',
+        'numpy',
+        # NOTE: 'pptx' intentionally omitted — the stock hook-pptx crashes
+        # analysis in this env (python-pptx 0.6.21, isolated subprocess dies
+        # with 0xC0000005). PDF->PPTX therefore needs review before it can
+        # be supported in the packaged EXE; see plan P1.
+        # Frozen numpy 2.x misses C-extension submodules via the stock hook
+        # (verified: numpy._core._exceptions absent -> pdf2docx/cv2 broken).
+    ] + collect_submodules('numpy._core'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

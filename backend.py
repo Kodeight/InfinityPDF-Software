@@ -45,7 +45,11 @@ class InfinityBackend:
         try:
             if output_path is None:
                 output_path = os.path.join(self.output_dir, os.path.basename(input_path))
-            
+
+            # Never silently overwrite a previous output (e.g. re-securing
+            # the same file twice).
+            output_path = self._unique_output_path(output_path)
+
             reader = PdfReader(input_path)
             writer = PdfWriter()
 
@@ -217,6 +221,16 @@ class InfinityBackend:
             
         return results
 
+    def _unique_output_path(self, output_path):
+        """Never silently overwrite an existing output; append _2, _3, ..."""
+        base, ext = os.path.splitext(output_path)
+        candidate = output_path
+        n = 2
+        while os.path.exists(candidate):
+            candidate = f"{base}_{n}{ext}"
+            n += 1
+        return candidate
+
     def _sanitize_filename_preserve_punctuation(self, name):
         """
         Sanitize filename but preserve common punctuation like (), -, _.
@@ -228,6 +242,11 @@ class InfinityBackend:
         return result.strip()
 
     def _pptx_to_pdf_win32(self, pptx_path, output_pdf_path):
+        if not os.path.exists(pptx_path):
+            raise FileNotFoundError(f"Input file not found: {pptx_path}")
+        out_dir = os.path.dirname(os.path.abspath(output_pdf_path))
+        if out_dir and not os.path.exists(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
         pythoncom.CoInitialize()
         powerpoint = None
         prs = None
@@ -235,16 +254,49 @@ class InfinityBackend:
             pptx_abs_path = os.path.abspath(pptx_path)
             pdf_abs_path = os.path.abspath(output_pdf_path)
 
-            powerpoint = win32com.client.Dispatch("PowerPoint.Application")
-            prs = powerpoint.Presentations.Open(pptx_abs_path, WithWindow=False)
-            
+            try:
+                powerpoint = win32com.client.Dispatch("PowerPoint.Application")
+            except Exception as e:
+                raise RuntimeError(
+                    "Microsoft PowerPoint is required for PPTX to PDF conversion but "
+                    f"could not be started: {e}"
+                )
+            try:
+                powerpoint.DisplayAlerts = 1  # ppAlertsNone: never block on dialogs
+            except Exception:
+                pass
+
+            try:
+                prs = powerpoint.Presentations.Open(
+                    pptx_abs_path, WithWindow=False, ReadOnly=True
+                )
+            except Exception as e:
+                raise RuntimeError(f"PowerPoint could not open presentation: {e}")
+
             # 32 = ppSaveAsPDF
-            prs.SaveAs(pdf_abs_path, 32)
+            try:
+                prs.SaveAs(pdf_abs_path, 32)
+            except Exception as e:
+                raise RuntimeError(f"PowerPoint could not save PDF: {e}")
+
+            import time
+            for _ in range(100):
+                if os.path.exists(pdf_abs_path) and os.path.getsize(pdf_abs_path) > 0:
+                    break
+                time.sleep(0.1)
+            if not os.path.exists(pdf_abs_path) or os.path.getsize(pdf_abs_path) == 0:
+                raise RuntimeError(
+                    "PowerPoint reported success but no PDF output was produced."
+                )
         finally:
-            if prs: prs.Close()
-            # Don't quit PowerPoint if user has it open? 
-            # Ideally quit only if we started it, but simple approach:
-            if powerpoint: powerpoint.Quit()
+            try:
+                if prs: prs.Close()
+            except Exception:
+                pass
+            try:
+                if powerpoint: powerpoint.Quit()
+            except Exception:
+                pass
             pythoncom.CoUninitialize()
 
     def _add_watermark_and_save(self, input_pdf, output_pdf, watermark_text, options):
@@ -254,17 +306,29 @@ class InfinityBackend:
         If options.enabled is False, watermark is skipped but restrictions still apply.
         """
         import io
-        
+
+        def _num(value, default, minimum=None, maximum=None):
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                number = float(default)
+            if minimum is not None:
+                number = max(minimum, number)
+            if maximum is not None:
+                number = min(maximum, number)
+            return number
+
         # Check if watermark is enabled (default True for backwards compat)
         watermark_enabled = options.get('enabled', True)
-        
-        # Parse watermark options with defaults (matching convert.py exactly)
-        opacity = options.get('opacity', 20) / 100.0  
-        font_size = options.get('fontSize', 36)
-        rotation = options.get('rotation', -30)
+
+        # Parse watermark options with defaults (matching convert.py exactly).
+        # Values come from IPC JSON and may have wrong types; coerce safely.
+        opacity = _num(options.get('opacity', 20), 20, 0, 100) / 100.0
+        font_size = _num(options.get('fontSize', 36), 36, 1, 500)
+        rotation = _num(options.get('rotation', -30), -30, -360, 360)
         diagonal = options.get('diagonal', False)
-        position_x_pct = options.get('positionX', 50) / 100.0
-        position_y_pct = options.get('positionY', 50) / 100.0
+        position_x_pct = _num(options.get('positionX', 50), 50, 0, 100) / 100.0
+        position_y_pct = _num(options.get('positionY', 50), 50, 0, 100) / 100.0
         
         # PDF restrictions from options
         pdf_restrictions = options.get('pdfRestrictions', {})
@@ -375,7 +439,7 @@ class InfinityBackend:
             target_format = target_format.upper()
             
             output_file = f"{base_name}.{target_format.lower()}"
-            output_path = os.path.join(output_dir, output_file)
+            output_path = self._unique_output_path(os.path.join(output_dir, output_file))
             
             if not os.path.exists(input_path):
                 return {"success": False, "error": f"Input file not found: {input_path}"}
@@ -496,25 +560,27 @@ class InfinityBackend:
     def _pdf_to_image(self, pdf_path, output_path, format):
         import fitz  # PyMuPDF
         doc = fitz.open(pdf_path)
-        # We only take the first page for "Universal Converter" simplicity 
-        # unless user wants a zip of all pages, but usually "Convert to Image"
-        # for a multi-page doc is better handled as single output.
-        # If the user wants ALL pages, we should create a folder.
-        # For now, let's just do page 1 or append page number if multi-page.
-        
-        if len(doc) > 1:
-            base, ext = os.path.splitext(output_path)
-            for i, page in enumerate(doc):
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # 2x scale for quality
-                p_output = f"{base}_page_{i+1}{ext}"
-                pix.save(p_output)
-            # Final path for UI display can be the first one
-            output_path = f"{base}_page_1{ext}"
-        else:
-            page = doc[0]
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            pix.save(output_path)
-        doc.close()
+        try:
+            # We only take the first page for "Universal Converter" simplicity
+            # unless user wants a zip of all pages, but usually "Convert to Image"
+            # for a multi-page doc is better handled as single output.
+            # If the user wants ALL pages, we should create a folder.
+            # For now, let's just do page 1 or append page number if multi-page.
+
+            if len(doc) > 1:
+                base, ext = os.path.splitext(output_path)
+                for i, page in enumerate(doc):
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) # 2x scale for quality
+                    p_output = f"{base}_page_{i+1}{ext}"
+                    pix.save(p_output)
+                # Final path for UI display can be the first one
+                output_path = f"{base}_page_1{ext}"
+            else:
+                page = doc[0]
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                pix.save(output_path)
+        finally:
+            doc.close()
         return output_path
 
     def _contains_arabic(self, text):
@@ -637,7 +703,9 @@ class InfinityBackend:
                 # Fill slide
                 slide.shapes.add_picture(img_path, 0, 0, width=prs.slide_width, height=prs.slide_height)
             except Exception as e:
-                print(f"Failed to add image to slide: {e}")
+                # stderr only: stdout must stay a single JSON line for the
+                # Electron universal-convert parser.
+                print(f"Failed to add image to slide: {e}", file=sys.stderr)
                 
         prs.save(output_path)
 
@@ -722,19 +790,50 @@ class InfinityBackend:
             pythoncom.CoUninitialize()
 
     def _excel_to_pdf_win32(self, input_path, output_path):
+        if not os.path.exists(input_path):
+            raise FileNotFoundError(f"Input file not found: {input_path}")
+        out_dir = os.path.dirname(os.path.abspath(output_path))
+        if out_dir and not os.path.exists(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
         pythoncom.CoInitialize()
         excel = None
         wb = None
         try:
-            excel = win32com.client.Dispatch("Excel.Application")
+            try:
+                excel = win32com.client.Dispatch("Excel.Application")
+            except Exception as e:
+                raise RuntimeError(
+                    "Microsoft Excel is required for XLSX to PDF conversion but "
+                    f"could not be started: {e}"
+                )
             excel.Interactive = False
             excel.Visible = False
-            wb = excel.Workbooks.Open(input_path)
+            try:
+                excel.DisplayAlerts = False
+            except Exception:
+                pass
+            try:
+                wb = excel.Workbooks.Open(os.path.abspath(input_path), ReadOnly=True)
+            except Exception as e:
+                raise RuntimeError(f"Excel could not open workbook: {e}")
             # 0 = xlTypePDF
-            wb.ExportAsFixedFormat(0, output_path)
+            try:
+                wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
+            except Exception as e:
+                raise RuntimeError(f"Excel could not export PDF: {e}")
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                raise RuntimeError(
+                    "Excel reported success but no PDF output was produced."
+                )
         finally:
-            if wb: wb.Close(False)
-            if excel: excel.Quit()
+            try:
+                if wb: wb.Close(False)
+            except Exception:
+                pass
+            try:
+                if excel: excel.Quit()
+            except Exception:
+                pass
             pythoncom.CoUninitialize()
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
   const fileInputRef = useRef<HTMLInputElement>(null);
   const singleReplaceRef = useRef<HTMLInputElement>(null);
   const [replacingIndex, setReplacingIndex] = useState<number | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const formats = ['PDF', 'PPTX', 'DOCX', 'DOC', 'JPG', 'PNG'];
 
@@ -88,6 +89,19 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
     }
   };
 
+  const handleStop = async () => {
+    if (!state.isProcessing || cancelling) return;
+    setCancelling(true);
+    addLog(t('cancelling_generation'), 'info');
+    try {
+      await (window as any).electron?.cancelUniversal?.();
+    } catch (err) {
+      console.error(err);
+    }
+    // The pending convertUniversal promise resolves with { cancelled: true };
+    // the loop below then resets the UI.
+  };
+
   const runConversion = async () => {
     if (state.isProcessing || files.length === 0) return;
     if (!(window as any).electron) {
@@ -95,6 +109,7 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
        return;
     }
 
+    setCancelling(false);
     setState(prev => ({ ...prev, isProcessing: true, progress: 0, completed: false }));
     setGeneratedFiles([]);
     addLog(t('starting_conversion'), "info");
@@ -103,10 +118,13 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
       // Clear temp directory before starting
       await (window as any).electron.clearUniversalTemp();
 
-      let completedCount = 0;
+      let doneCount = 0;
+      let successCount = 0;
+      let wasCancelled = false;
       const paths: string[] = [];
 
       for (const file of files) {
+        if (wasCancelled) break;
         const filePath = (file as any).path;
         if (!filePath) {
           addLog(`${t('skipping_file_path') || 'Skipping'}: ${file.name}`, "error");
@@ -117,33 +135,63 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
         const ext = file.name.split('.').pop()?.toUpperCase();
         if (ext === targetFormat || (ext === 'DOCX' && targetFormat === 'DOC') || (ext === 'DOC' && targetFormat === 'DOCX')) {
           addLog(`${t('skipped_match') || 'Skipped'} ${file.name}`, "info");
-          completedCount++;
-          setState(prev => ({ ...prev, progress: Math.round((completedCount / files.length) * 100) }));
+          doneCount += 1;
+          const step = doneCount;
+          setState(prev => ({ ...prev, progress: Math.round((step / files.length) * 100) }));
           continue;
         }
 
         addLog(`${t('converting')} ${file.name}...`, "info");
-        
+
         const result = await (window as any).electron.convertUniversal({
           inputPath: filePath,
           targetFormat: targetFormat
         });
 
+        if (result && (result as any).cancelled) {
+          wasCancelled = true;
+          break;
+        }
+
+        doneCount += 1;
+        const step = doneCount;
         if (result.success) {
-          completedCount++;
+          successCount++;
           paths.push(result.path);
-          setState(prev => ({ ...prev, progress: Math.round((completedCount / files.length) * 100) }));
+          setState(prev => ({ ...prev, progress: Math.round((step / files.length) * 100) }));
         } else {
           addLog(`${t('error')} [${file.name}]: ${result.error}`, "error");
+          setState(prev => ({ ...prev, progress: Math.round((step / files.length) * 100) }));
         }
       }
 
+      setCancelling(false);
+      if (wasCancelled || cancelling) {
+        setGeneratedFiles([]);
+        setState(prev => ({ ...prev, progress: 0, isProcessing: false, completed: false }));
+        addLog(t('generation_cancelled'), 'info');
+        return;
+      }
+      if (successCount === 0) {
+        // Honest failure: nothing was produced, so this is not "finished".
+        setGeneratedFiles([]);
+        setState(prev => ({ ...prev, isProcessing: false, completed: false }));
+        addLog(`${t('error')}: 0/${files.length}`, "error");
+        return;
+      }
       setGeneratedFiles(paths);
       setState(prev => ({ ...prev, progress: 100, isProcessing: false, completed: true }));
-      addLog(t('conversion_finished'), "success");
+      addLog(`${t('conversion_finished')} (${successCount}/${files.length})`, "success");
     } catch (err: any) {
-      addLog(`${t('error')}: ${err.message}`, "error");
-      setState(prev => ({ ...prev, isProcessing: false }));
+      setCancelling(false);
+      if (cancelling) {
+        setGeneratedFiles([]);
+        addLog(t('generation_cancelled'), 'info');
+        setState(prev => ({ ...prev, progress: 0, isProcessing: false, completed: false }));
+      } else {
+        addLog(`${t('error')}: ${err.message}`, "error");
+        setState(prev => ({ ...prev, isProcessing: false }));
+      }
     }
   };
 
@@ -247,8 +295,21 @@ const UniversalPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang }
       </div>
 
       <div className="w-full max-w-md">
-          <button disabled={state.isProcessing} onClick={state.completed ? handleExport : runConversion} className={`w-full py-5 rounded-[1.5rem] text-white text-[0.6875em] font-bold uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-3 ${state.completed ? 'bg-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)]'} disabled:opacity-20`}>
-            {state.completed ? t('export_results') : (files.length > 1 ? t('convert_all') : t('convert'))}
+          <button
+            disabled={state.completed ? false : (cancelling || (!state.isProcessing && files.length === 0))}
+            onClick={state.completed ? handleExport : (state.isProcessing ? handleStop : runConversion)}
+            className={`w-full py-5 rounded-[1.5rem] text-white text-[0.6875em] font-bold uppercase tracking-[0.2em] transition-all active:scale-95 flex items-center justify-center gap-3 ${
+              state.completed
+                ? 'bg-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
+                : state.isProcessing
+                  ? (cancelling ? 'bg-white/10 border border-white/10 animate-pulse' : 'bg-[#cc4455] hover:bg-[#b33a4a]')
+                  : 'bg-blue-600 hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)]'
+            } disabled:opacity-20`}>
+            {state.completed
+              ? t('export_results')
+              : state.isProcessing
+                ? (cancelling ? t('stopping') : t('stop'))
+                : (files.length > 1 ? t('convert_all') : t('convert'))}
           </button>
       </div>
     </div>

@@ -10,3 +10,10 @@ pdf2docx==0.5.6
 python-docx==1.1.2
 docx2pdf==0.1.8
 pymupdf==1.25.0
+numpy
+# Optional: OCR extras. The OCR tool degrades gracefully without them
+# (engines probe reports them missing instead of crashing).
+# ocrmypdf
+# pytesseract
+# NOTE: keep pins in sync with the runtime used to build
+# backend-dist/InfinityPDF-backend.exe before running electron-builder.

@@ -99,8 +99,9 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
 
 
   useEffect(() => {
+    let off: (() => void) | undefined;
     if ((window as any).electron) {
-      (window as any).electron.onProgress((progress: number) => {
+      off = (window as any).electron.onProgress((progress: number) => {
         setState(prev => ({ ...prev, progress }));
       });
     }
@@ -109,6 +110,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
        const first = items.find(i => selectedItems.has(i));
        if (first) setPreviewRecipient(first);
     }
+    return () => { if (off) off(); };
   }, []);
 
   const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

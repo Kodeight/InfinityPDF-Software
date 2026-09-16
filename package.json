@@ -1,7 +1,7 @@
 {
   "name": "infinitypdf",
   "version": "1.4.0",
-  "main": "public/electron.js",
+  "main": "main/main.js",
   "description": "Professional Document Management Suite",
   "author": "Abdelhalim K.",
   "scripts": {
@@ -9,7 +9,7 @@
     "dev": "concurrently \"npm run react-dev\" \"wait-on http://localhost:3000 && electron .\"",
     "react-dev": "react-scripts start",
     "build": "react-scripts build",
-    "build:backend": "pyinstaller --name InfinityPDF-backend --onefile --distpath backend-dist backend.py",
+    "build:backend": "pyinstaller backend.spec --distpath backend-dist --noconfirm && pyinstaller newtools.spec --distpath backend-dist --noconfirm",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "dist": "npm run build && npm run build:backend && electron-builder"
@@ -58,12 +58,16 @@
     "appId": "com.infinitypdf.app",
     "productName": "InfinityPDF",
     "extraMetadata": {
-      "main": "build/electron.js"
+      "main": "main/main.js"
     },
     "extraResources": [
       {
         "from": "backend-dist/InfinityPDF-backend.exe",
         "to": "InfinityPDF-backend.exe"
+      },
+      {
+        "from": "backend-dist/newtools-backend.exe",
+        "to": "newtools-backend.exe"
       }
     ],
     "directories": {
