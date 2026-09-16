@@ -36,6 +36,10 @@ TestOutput/
 TODO.md
 arabic_docx_pdf_regression.py
 run_all_checks.py
+repro_*.py
+create_dummy_*.py
+dummy.pptx
+SECURED_dummy_*.pdf
 
 # Build, distribution, and local artifacts
 build/
