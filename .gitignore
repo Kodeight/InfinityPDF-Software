@@ -33,6 +33,9 @@ TestOutput/
 
 *fix.md
 *task.md
+TODO.md
+arabic_docx_pdf_regression.py
+run_all_checks.py
 
 # Build, distribution, and local artifacts
 build/

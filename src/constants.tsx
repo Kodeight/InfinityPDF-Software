@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { Tool } from './types';
+import { NEW_TOOL_DEFS } from './components/newtools/toolDefs';
 
 export const TOOLS: Tool[] = [
   {
@@ -33,7 +34,19 @@ export const TOOLS: Tool[] = [
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
       </svg>
     )
-  }
+  },
+  // --- Additive expansion: 25 new tools appended. Existing entries above untouched.
+  // They render from their own definitions (name/description/icon) and stay out
+  // of the top navbar (hideFromNav) to preserve its layout; they are reachable
+  // via the dashboard grid and the "More Tools" menu.
+  ...NEW_TOOL_DEFS.map((d) => ({
+    id: d.id as Tool['id'],
+    name: d.title,
+    description: d.desc,
+    icon: d.icon,
+    category: d.category,
+    hideFromNav: true,
+  })),
 ];
 
 export const LANGUAGES = [

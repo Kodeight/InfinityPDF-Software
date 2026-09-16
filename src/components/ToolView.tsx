@@ -6,6 +6,9 @@ import ProgressBar from './ProgressBar';
 import MultiPDFPanel from './MultiPDFPanel';
 import PermissionsPanel from './PermissionsPanel';
 import UniversalPanel from './UniversalPanel';
+import NewToolView from './newtools/NewToolView';
+import PdfEditorPanel from './newtools/PdfEditorPanel';
+import { NEW_TOOL_MAP } from './newtools/toolDefs';
 import LogDropdown from './LogDropdown';
 import { translations, LanguageCode } from '../translations';
 
@@ -100,6 +103,16 @@ const ToolView: React.FC<Props> = ({ toolId, lang }) => {
       addLog(`${files.length} ${t('files_added')}. ${t('ready_for_processing')}`, 'info');
     }
   };
+
+  // Additive expansion route: new tools render in isolated panels.
+  // Existing tool branches below are untouched.
+  const newDef = NEW_TOOL_MAP[toolId];
+  if (newDef) {
+    if (toolId === 'pdf_editor') {
+      return <PdfEditorPanel state={state} setState={setState} addLog={addLog} />;
+    }
+    return <NewToolView def={newDef} state={state} setState={setState} addLog={addLog} lang={lang} />;
+  }
 
   if (toolId === 'multi_pdf') {
     return <MultiPDFPanel tool={tool!} addLog={addLog} state={state} setState={setState} handleProcess={handleProcess} lang={lang} />;

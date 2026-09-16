@@ -112,8 +112,14 @@ class InfinityBackend:
         
         # 1. Prepare base PDF
         base_pdf_path = os.path.join(tempfile.gettempdir(), f"base_{uuid.uuid4().hex}.pdf")
-        
+        cancel_file = os.environ.get("INFINITYPDF_CANCEL_FILE", "")
+
+        def _cancel_requested():
+            return bool(cancel_file) and os.path.exists(cancel_file)
+
         try:
+            if _cancel_requested():
+                return [{"name": "Cancelled", "status": "cancelled", "error": "Cancelled before start"}]
             if Path(source_path).suffix.lower() == '.pdf':
                 import shutil
                 shutil.copy2(source_path, base_pdf_path)
@@ -121,6 +127,11 @@ class InfinityBackend:
                 self._pptx_to_pdf_win32(source_path, base_pdf_path)
         except Exception as e:
             traceback.print_exc()
+            try:
+                if os.path.exists(base_pdf_path):
+                    os.remove(base_pdf_path)
+            except Exception:
+                pass
             return [{"name": "Global Error", "status": "error", "error": f"Base PDF preparation failed: {e}"}]
 
         # Ensure pdfRestrictions dict exists (frontend now sends all flags explicitly)
@@ -138,11 +149,17 @@ class InfinityBackend:
         total = len(recipients_to_process)
 
         # 2. Process for each recipient
+        # Cancellation is cooperative: the Electron layer kills the process AND
+        # touches INFINITYPDF_CANCEL_FILE. We check before each recipient so no
+        # additional files are started after cancellation was requested.
         for i, name in enumerate(recipients_to_process):
             try:
+                if _cancel_requested():
+                    print("STATUS:Cancelled by user", flush=True)
+                    break
                 # Report progress per recipient
                 progress = 5 + int(((i + 1) / max(total, 1)) * 90)
-                print(f"PROGRESS:{progress}")
+                print(f"PROGRESS:{progress}", flush=True)
                 
                 # Handle empty/whitespace-only names gracefully
                 clean_name = (name or "").strip()
@@ -174,20 +191,23 @@ class InfinityBackend:
                 
                 output_filename = f"{safe_name}.pdf"
                 output_path = os.path.join(output_subfolder, output_filename)
-                
-                print(f"STATUS:Processing {clean_name or f'file {i+1}'}...")
-                
+
+                print(f"STATUS:Processing {clean_name or f'file {i+1}'}...", flush=True)
+
                 # Apply watermark and save with restrictions
                 self._add_watermark_and_save(base_pdf_path, output_path, clean_name, watermark_options)
-                
+
                 results.append({"name": clean_name or f"file_{i+1}", "status": "success", "path": output_path})
             except Exception as e:
                 traceback.print_exc()
                 results.append({"name": name or f"file_{i+1}", "status": "error", "error": str(e)})
-        
-        # Cleanup base PDF
-        if os.path.exists(base_pdf_path):
-            os.remove(base_pdf_path)
+
+        # Cleanup base PDF (also runs when the loop was cancelled mid-way)
+        try:
+            if os.path.exists(base_pdf_path):
+                os.remove(base_pdf_path)
+        except Exception:
+            pass
         
         # Summary
         success_count = sum(1 for r in results if r.get("status") == "success")
@@ -357,13 +377,15 @@ class InfinityBackend:
             output_file = f"{base_name}.{target_format.lower()}"
             output_path = os.path.join(output_dir, output_file)
             
+            if not os.path.exists(input_path):
+                return {"success": False, "error": f"Input file not found: {input_path}"}
+
             # Strategy Selection
             if target_format == "PDF":
                 if ext in ['.pptx', '.ppt']:
                     self._pptx_to_pdf_win32(input_path, output_path)
                 elif ext in ['.docx', '.doc']:
-                    from docx2pdf import convert
-                    convert(input_path, output_path)
+                    self._docx_to_pdf_win32(input_path, output_path)
                 elif ext in ['.xlsx', '.xls']:
                     self._excel_to_pdf_win32(input_path, output_path)
                 elif ext in ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']:
@@ -374,6 +396,11 @@ class InfinityBackend:
                     image.save(output_path)
                 else:
                     return {"success": False, "error": f"Unsupported input format for PDF conversion: {ext}"}
+
+                # Verify the converter actually produced a readable PDF instead
+                # of silently succeeding (previous DOCX bug class).
+                if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                    return {"success": False, "error": f"Conversion produced no output for: {os.path.basename(input_path)}"}
             
             elif target_format in ["DOCX", "DOC"]:
                 if ext == '.pdf':
@@ -613,6 +640,86 @@ class InfinityBackend:
                 print(f"Failed to add image to slide: {e}")
                 
         prs.save(output_path)
+
+    def _docx_to_pdf_win32(self, input_path, output_path):
+        """Convert DOCX/DOC -> PDF using native Word automation.
+
+        Root-cause fix: the previous implementation delegated to the third-party
+        ``docx2pdf`` wrapper, which fails when Word is busy, when paths contain
+        Unicode characters, or when its own CLI cannot locate the output. Using
+        Word's ``SaveAs(FileFormat=17)`` directly preserves Arabic glyph
+        shaping, right-to-left paragraph direction, mixed Latin/Arabic runs,
+        tables and page structure because Word itself renders the PDF.
+        """
+        if not os.path.exists(input_path):
+            raise FileNotFoundError(f"Input file not found: {input_path}")
+
+        input_abs = os.path.abspath(input_path)
+        output_abs = os.path.abspath(output_path)
+        out_dir = os.path.dirname(output_abs)
+        if out_dir and not os.path.exists(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
+
+        pythoncom.CoInitialize()
+        word = None
+        doc = None
+        try:
+            try:
+                word = win32com.client.Dispatch("Word.Application")
+            except Exception as e:
+                raise RuntimeError(
+                    "Microsoft Word is required for DOCX to PDF conversion but "
+                    f"could not be started: {e}"
+                )
+            word.Visible = False
+            try:
+                word.DisplayAlerts = 0  # wdAlertsNone: never block on dialogs
+            except Exception:
+                pass
+
+            # Open read-only without encoding dialogs so Arabic documents with
+            # unusual encodings never pop up a blocking prompt.
+            try:
+                doc = word.Documents.Open(
+                    input_abs,
+                    ConfirmConversions=False,
+                    ReadOnly=True,
+                    NoEncodingDialog=True,
+                )
+            except Exception as e:
+                raise RuntimeError(f"Word could not open document: {e}")
+
+            # 17 = wdFormatPDF. UseNoVitamin / compatibility handled by Word.
+            try:
+                doc.SaveAs(output_abs, FileFormat=17)
+            except Exception as e:
+                raise RuntimeError(f"Word could not save PDF: {e}")
+
+            # Word returns before the file is flushed on slow disks; poll briefly.
+            import time
+            for _ in range(100):
+                if os.path.exists(output_abs) and os.path.getsize(output_abs) > 0:
+                    break
+                time.sleep(0.1)
+
+            if not os.path.exists(output_abs) or os.path.getsize(output_abs) == 0:
+                raise RuntimeError(
+                    "Word reported success but no PDF output was produced. "
+                    "The document may use fonts Word cannot embed, or the "
+                    "output folder may not be writable."
+                )
+        finally:
+            try:
+                if doc is not None:
+                    doc.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if word is not None:
+                    word.Quit()
+            except Exception:
+                pass
+            pythoncom.CoUninitialize()
 
     def _excel_to_pdf_win32(self, input_path, output_path):
         pythoncom.CoInitialize()

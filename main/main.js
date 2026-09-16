@@ -8,6 +8,14 @@ const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 
 let mainWindow;
 
+// Active Multi-PDF generation tracking for real cancellation support.
+// The Electron layer owns the child process handle; STOP kills the process
+// AND touches a cancel flag file that the Python backend polls between
+// recipients so no additional files are started after cancellation.
+let activeMultiPdfProcess = null;
+let multiPdfCancelled = false;
+let multiPdfCancelFile = null;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -47,6 +55,11 @@ function createWindow() {
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
+  try {
+    if (activeMultiPdfProcess && !activeMultiPdfProcess.killed) {
+      activeMultiPdfProcess.kill();
+    }
+  } catch (e) {}
   if (process.platform !== "darwin") app.quit();
 });
 
@@ -115,7 +128,19 @@ ipcMain.handle(
       // Prepare data for Python backend
       const studentList = { students: targetRecipients.map(name => ({ name })) };
 
+      // Reset cancellation state for this job. The cancel file must NOT exist
+      // until the user presses STOP; the backend polls for its existence.
+      const os = require("os");
+      multiPdfCancelled = false;
+      multiPdfCancelFile = path.join(os.tmpdir(), `infinitypdf-cancel-${Date.now()}.flag`);
+      try { if (fs.existsSync(multiPdfCancelFile)) fs.removeSync(multiPdfCancelFile); } catch (e) {}
+      const cancelEnv = { ...process.env, INFINITYPDF_CANCEL_FILE: multiPdfCancelFile };
+
       const runBackendForSource = (currentSourcePath, sourceIndex) => new Promise((resolve, reject) => {
+        if (multiPdfCancelled) {
+          resolve({ success: false, cancelled: true, results: [] });
+          return;
+        }
         let executor, args;
         const sourceWatermark = { ...watermark };
 
@@ -148,7 +173,8 @@ ipcMain.handle(
         }
 
         console.log("Spawning backend process for Multi PDF:", executor, args);
-        const pythonProcess = spawn(executor, args);
+        const pythonProcess = spawn(executor, args, { env: cancelEnv });
+        activeMultiPdfProcess = pythonProcess;
 
         let stdout = "";
         let stderr = "";
@@ -174,6 +200,11 @@ ipcMain.handle(
         });
 
         pythonProcess.on("close", (code) => {
+          activeMultiPdfProcess = null;
+          if (multiPdfCancelled) {
+            resolve({ success: false, cancelled: true, results: [] });
+            return;
+          }
           if (code === 0) {
             try {
               // Parse result from stdout
@@ -195,18 +226,35 @@ ipcMain.handle(
         });
 
         pythonProcess.on("error", (err) => {
+          activeMultiPdfProcess = null;
           console.error("Python spawn error:", err);
-          reject(err);
+          if (multiPdfCancelled) {
+            resolve({ success: false, cancelled: true, results: [] });
+          } else {
+            reject(err);
+          }
         });
       });
 
       const combinedResults = [];
-      for (let i = 0; i < inputPaths.length; i++) {
-        const result = await runBackendForSource(inputPaths[i], i);
-        if (result && result.success === false) {
-          throw new Error(result.error || "PPTX conversion failed");
+      try {
+        for (let i = 0; i < inputPaths.length; i++) {
+          // Never start another document after cancellation was requested.
+          if (multiPdfCancelled) break;
+          const result = await runBackendForSource(inputPaths[i], i);
+          if (result && result.cancelled) break;
+          if (result && result.success === false) {
+            throw new Error(result.error || "PPTX conversion failed");
+          }
+          combinedResults.push(...(result.results || []));
         }
-        combinedResults.push(...(result.results || []));
+      } finally {
+        activeMultiPdfProcess = null;
+        try { if (multiPdfCancelFile && fs.existsSync(multiPdfCancelFile)) fs.removeSync(multiPdfCancelFile); } catch (e) {}
+      }
+
+      if (multiPdfCancelled) {
+        return { success: false, cancelled: true, results: combinedResults, outputDir };
       }
 
       mainWindow.webContents.send("process-progress", 100);
@@ -216,6 +264,39 @@ ipcMain.handle(
     }
   },
 );
+
+// Real cancellation: STOP the running Multi-PDF backend process.
+// Kills the active child process tree and touches the cancel flag file so the
+// Python backend stops before starting the next recipient/document and cleans
+// up its temporary base PDF.
+ipcMain.handle("cancel-multi-pdf", async () => {
+  try {
+    multiPdfCancelled = true;
+    if (multiPdfCancelFile) {
+      try { fs.ensureFileSync(multiPdfCancelFile); } catch (e) {}
+    }
+    const proc = activeMultiPdfProcess;
+    if (proc && !proc.killed) {
+      try {
+        if (process.platform === "win32" && proc.pid) {
+          const { execSync } = require("child_process");
+          try {
+            execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: "ignore" });
+          } catch (e) {
+            try { proc.kill("SIGKILL"); } catch (e2) {}
+          }
+        } else {
+          proc.kill("SIGTERM");
+        }
+      } catch (e) {
+        console.error("Cancel kill error:", e);
+      }
+    }
+    return { success: true, cancelled: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
 
 // Core Logic: Apply PDF Security Permissions
 ipcMain.handle(
@@ -397,6 +478,146 @@ ipcMain.handle("clear-security-temp", async () => {
     return { success: true };
   } catch (err) {
     console.error("Clear security temp error:", err);
+    return { success: false, error: err.message };
+  }
+});
+
+// ============================================================================
+// NEW TOOLS (additive expansion) — generic runner.
+// Everything above this block is pre-existing and untouched. New tools each
+// have their own Python module under new_tools/<tool>.py speaking the
+// PROGRESS:/RESULT: protocol (see new_tools/_common.py). This single generic
+// handler routes jobs without per-tool IPC code.
+// Allowed tool ids double as module file names (<id>.py).
+// ============================================================================
+const NEW_TOOL_MODULES = [
+  "pdf_organizer", "pdf_compressor", "pdf_to_images", "images_to_pdf",
+  "pdf_to_text", "pdf_info", "pdf_to_word", "pdf_to_excel",
+  "pdf_image_extractor", "pdf_table_extractor", "pdf_editor", "pdf_crop",
+  "pdf_snapshot", "pdf_flatten", "pdf_ocr", "scan_to_pdf",
+  "pdf_blank_page_remover", "certificate_generator", "batch_pdf_renamer",
+  "pdf_signer", "pdf_forms", "pdf_metadata_cleaner", "pdf_redaction",
+  "pdf_repair", "pdf_measurement",
+];
+
+const activeNewToolJobs = new Map(); // jobId -> { process, cancelFile, cancelled }
+
+function resolveNewToolModule(tool) {
+  const devPath = path.join(__dirname, "..", "new_tools", `${tool}.py`);
+  if (fs.existsSync(devPath)) return devPath;
+  const resPath = path.join(process.resourcesPath || "", "new_tools", `${tool}.py`);
+  if (resPath && fs.existsSync(resPath)) return resPath;
+  return devPath;
+}
+
+ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, outputDir }) => {
+  const id = String(jobId || `job_${Date.now()}`);
+  const mod = String(tool || "");
+  if (!NEW_TOOL_MODULES.includes(mod) || !/^[a-z_]+$/.test(mod)) {
+    return { success: false, error: `Unknown tool: ${mod}` };
+  }
+  try {
+    const { spawn } = require("child_process");
+    const os = require("os");
+
+    const outDir = outputDir || path.join(os.tmpdir(), `InfinityPDF_${mod}`);
+    await fs.ensureDir(outDir);
+
+    const modulePath = resolveNewToolModule(mod);
+    if (!fs.existsSync(modulePath)) {
+      return { success: false, error: `Backend module not found for tool: ${mod}` };
+    }
+
+    const cancelFile = path.join(os.tmpdir(), `newtool-cancel-${id}.flag`);
+    try { if (fs.existsSync(cancelFile)) fs.removeSync(cancelFile); } catch (e) {}
+    const job = { process: null, cancelFile, cancelled: false };
+    activeNewToolJobs.set(id, job);
+
+    const result = await new Promise((resolve) => {
+      const proc = spawn("python", [modulePath, String(operation || ""), JSON.stringify(args || {}), outDir], {
+        env: { ...process.env, NEWTOOL_CANCEL_FILE: cancelFile },
+      });
+      job.process = proc;
+
+      let stdout = "";
+      let stderr = "";
+
+      proc.stdout.on("data", (data) => {
+        const text = data.toString();
+        stdout += text;
+        for (const m of text.matchAll(/PROGRESS:(\d+)/g)) {
+          try {
+            mainWindow.webContents.send("newtool-progress", { jobId: id, value: parseInt(m[1], 10) });
+          } catch (e) {}
+        }
+      });
+      proc.stderr.on("data", (data) => { stderr += data.toString(); });
+
+      proc.on("error", (err) => {
+        resolve({ success: false, error: `Failed to start Python backend (is Python installed?): ${err.message}` });
+      });
+
+      proc.on("close", (code) => {
+        if (job.cancelled) {
+          resolve({ success: false, cancelled: true });
+          return;
+        }
+        try {
+          const lines = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+          const resultLines = lines.filter((l) => l.startsWith("RESULT:"));
+          if (resultLines.length > 0) {
+            resolve(JSON.parse(resultLines[resultLines.length - 1].slice("RESULT:".length)));
+            return;
+          }
+        } catch (e) {
+          resolve({ success: false, error: `Invalid backend response: ${e.message}` });
+          return;
+        }
+        if (code === 0) {
+          resolve({ success: false, error: "Backend produced no result" });
+        } else {
+          const tail = stderr.trim().split("\n").slice(-3).join(" ");
+          resolve({ success: false, error: tail || `Backend failed with exit code ${code}` });
+        }
+      });
+    });
+
+    return result;
+  } catch (err) {
+    return { success: false, error: err.message };
+  } finally {
+    const job = activeNewToolJobs.get(id);
+    activeNewToolJobs.delete(id);
+    try {
+      const cf = job && job.cancelFile;
+      if (cf && fs.existsSync(cf)) fs.removeSync(cf);
+    } catch (e) {}
+  }
+});
+
+ipcMain.handle("cancel-new-tool", async (event, { jobId }) => {
+  try {
+    const job = activeNewToolJobs.get(String(jobId || ""));
+    if (!job) return { success: true, note: "no active job" };
+    job.cancelled = true;
+    try { fs.ensureFileSync(job.cancelFile); } catch (e) {}
+    const proc = job.process;
+    if (proc && !proc.killed) {
+      try {
+        if (process.platform === "win32" && proc.pid) {
+          const { execSync } = require("child_process");
+          try {
+            execSync(`taskkill /pid ${proc.pid} /T /F`, { stdio: "ignore" });
+          } catch (e) {
+            try { proc.kill("SIGKILL"); } catch (e2) {}
+          }
+        } else {
+          proc.kill("SIGTERM");
+        }
+      } catch (e) {}
+    }
+    return { success: true, cancelled: true };
+  } catch (err) {
     return { success: false, error: err.message };
   }
 });

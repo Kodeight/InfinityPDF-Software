@@ -76,19 +76,40 @@ def pptx_to_pdf(pptx_path, output_pdf_path):
 # =====================================================
 
 def docx_to_pdf(docx_path, output_pdf_path):
+    if not os.path.exists(docx_path):
+        raise FileNotFoundError(f"Input file not found: {docx_path}")
+    os.makedirs(os.path.dirname(os.path.abspath(output_pdf_path)) or ".", exist_ok=True)
     pythoncom.CoInitialize()
     word = None
     doc = None
 
     try:
         word = win32com.client.Dispatch("Word.Application")
-        doc = word.Documents.Open(os.path.abspath(docx_path), ReadOnly=True)
+        word.Visible = False
+        try:
+            word.DisplayAlerts = 0
+        except Exception:
+            pass
+        doc = word.Documents.Open(
+            os.path.abspath(docx_path),
+            ConfirmConversions=False,
+            ReadOnly=True,
+            NoEncodingDialog=True,
+        )
         doc.SaveAs(os.path.abspath(output_pdf_path), FileFormat=17)  # 17 = PDF
+        if not os.path.exists(output_pdf_path) or os.path.getsize(output_pdf_path) == 0:
+            raise RuntimeError("Word reported success but no PDF output was produced.")
     finally:
-        if doc:
-            doc.Close()
-        if word:
-            word.Quit()
+        try:
+            if doc:
+                doc.Close(SaveChanges=False)
+        except Exception:
+            pass
+        try:
+            if word:
+                word.Quit()
+        except Exception:
+            pass
         pythoncom.CoUninitialize()
 
 

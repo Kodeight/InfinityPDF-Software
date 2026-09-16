@@ -43,6 +43,11 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
   
   const [openSection, setOpenSection] = useState<'watermark' | 'permissions'>('watermark');
 
+  // Generation phase for the Generate -> Stop -> Stopping… -> Generate cycle.
+  // `cancelling` is local: main-process kill resolves the pending
+  // processMultiPDF promise with { cancelled: true }, which resets UI below.
+  const [cancelling, setCancelling] = useState(false);
+
 
 
   const excelInputRef = useRef<HTMLInputElement>(null);
@@ -181,14 +186,28 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
     }
   };
 
+  const handleStop = async () => {
+    if (!state.isProcessing || cancelling) return;
+    setCancelling(true);
+    addLog(t('cancelling_generation'), 'info');
+    try {
+      await (window as any).electron?.cancelMultiPDF?.();
+    } catch (err) {
+      console.error(err);
+    }
+    // The pending processMultiPDF promise resolves with { cancelled: true }
+    // once the backend process exits; runSmartProcessing resets the UI there.
+  };
+
   const runSmartProcessing = async () => {
     if (state.isProcessing) return;
-    
+
     if (sourceFiles.length === 0) {
         addLog(t('resolve_path_error'), "error");
         return;
     }
-    
+
+    setCancelling(false);
     setState(prev => ({ ...prev, isProcessing: true, progress: 0, completed: false }));
     addLog(t('initiating_batch'), 'info');
 
@@ -214,8 +233,16 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
           namingPattern: ''
         });
 
+        if (result && (result as any).cancelled) {
+          addLog(t('generation_cancelled'), 'info');
+          setCancelling(false);
+          setState(prev => ({ ...prev, progress: 0, isProcessing: false, completed: false }));
+          return;
+        }
+
         if (result.success) {
           addLog(`${t('batch_success')} (${result.results?.length || 0})`, 'success');
+          setCancelling(false);
           setState(prev => ({ ...prev, progress: 100, isProcessing: false, completed: true }));
         } else {
           throw new Error(result.error);
@@ -233,12 +260,21 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
           await new Promise(r => setTimeout(r, 100));
           }
         }
+        setCancelling(false);
         setState(prev => ({ ...prev, progress: 100, isProcessing: false, completed: true }));
       }
     } catch (error: any) {
       console.error(error);
-      addLog(`${t('status_failure')}: ${error.message || t('error')}`, "error");
-      setState(prev => ({ ...prev, isProcessing: false }));
+      // A kill during cancellation surfaces as a backend failure; report it
+      // as a clean cancellation instead of an error when we requested it.
+      if (cancelling) {
+        addLog(t('generation_cancelled'), 'info');
+        setState(prev => ({ ...prev, progress: 0, isProcessing: false, completed: false }));
+      } else {
+        addLog(`${t('status_failure')}: ${error.message || t('error')}`, "error");
+        setState(prev => ({ ...prev, isProcessing: false }));
+      }
+      setCancelling(false);
     }
   };
 
@@ -531,17 +567,18 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
           )}
 
           <div className="grid grid-cols-2 gap-4">
-            <button 
-              onClick={state.completed 
+            <button
+              disabled={state.isProcessing && !state.completed}
+              onClick={state.completed
                 ? () => {
                     setState(prev => ({ ...prev, progress: 0, completed: false, isProcessing: false }));
                     setSourceFiles([]);
                   }
                 : selectOutputDir
               }
-              className={`py-4 rounded-full text-[0.625em] font-bold uppercase tracking-widest transition-all ${
-                state.completed 
-                  ? 'bg-[#cc4455] text-white hover:bg-[#b33a4a]' 
+              className={`py-4 rounded-full text-[0.625em] font-bold uppercase tracking-widest transition-all btn-centered disabled:opacity-20 ${
+                state.completed
+                  ? 'bg-[#cc4455] text-white hover:bg-[#b33a4a]'
                   : 'bg-white/5 border border-white/10 text-white/70 hover:bg-white/10'
               }`}>
               {state.completed 
@@ -549,12 +586,34 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
                 : t('browse')
               }
             </button>
-            <button 
-              disabled={state.isProcessing || sourceFiles.length === 0}
-              onClick={state.completed ? (() => (window as any).electron?.openPath(outputDir)) : runSmartProcessing}
-              className={`py-4 rounded-full text-white text-[0.625em] font-bold uppercase tracking-widest transition-all active:scale-95 ${state.completed ? 'bg-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : 'bg-blue-600 hover:bg-blue-700 shadow-[0_0_25px_rgba(59,130,246,0.3)]'} disabled:opacity-20`}
+            <button
+              disabled={
+                state.completed
+                  ? false
+                  : cancelling || (state.isProcessing ? false : sourceFiles.length === 0)
+              }
+              onClick={
+                state.completed
+                  ? (() => (window as any).electron?.openPath(outputDir))
+                  : state.isProcessing
+                    ? handleStop
+                    : runSmartProcessing
+              }
+              className={`py-4 rounded-full text-white text-[0.625em] font-bold uppercase tracking-widest transition-all active:scale-95 btn-centered ${
+                state.completed
+                  ? 'bg-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
+                  : state.isProcessing
+                    ? cancelling
+                      ? 'bg-white/10 border border-white/10 text-white/60 cursor-wait animate-pulse'
+                      : 'bg-[#cc4455] hover:bg-[#b33a4a] shadow-[0_0_25px_rgba(204,68,85,0.35)]'
+                    : 'bg-blue-600 hover:bg-blue-700 shadow-[0_0_25px_rgba(59,130,246,0.3)]'
+              } disabled:opacity-20`}
             >
-              {state.completed ? t('open_folder') : t('generate')}
+              {state.completed
+                ? t('open_folder')
+                : state.isProcessing
+                  ? (cancelling ? t('stopping') : t('stop'))
+                  : t('generate')}
             </button>
           </div>
         </div>

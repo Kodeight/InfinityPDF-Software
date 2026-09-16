@@ -3,6 +3,7 @@ import React from 'react';
 import { ToolId } from '../types';
 import { TOOLS } from '../constants';
 import { translations, LanguageCode } from '../translations';
+import { NEW_TOOL_CATEGORIES, NEW_TOOL_DEFS } from './newtools/toolDefs';
 
 interface Props {
   onSelectTool: (id: ToolId) => void;
@@ -12,8 +13,14 @@ interface Props {
 const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
   const t = (key: string) => translations[key]?.[lang as LanguageCode] || key;
 
+  // Existing tools keep their exact rendering; new tools read name/desc
+  // from their own definitions (translations file stays frozen).
+  const legacyName = (id: string) => t(id === 'multi_pdf' ? 'multi_pdf' : id === 'permissions' ? 'pdf_security' : 'universal_converter');
+  const legacyDesc = (id: string) => t(id === 'multi_pdf' ? 'multi_pdf_desc' : id === 'permissions' ? 'security_desc' : 'universal_desc');
+  const existing = TOOLS.filter((tool) => !tool.hideFromNav);
+
   return (
-    <div className="h-full flex flex-col items-center justify-start pt-12 p-4">
+    <div className="h-full flex flex-col items-center justify-start pt-12 p-4 overflow-y-auto custom-scrollbar">
       <div className="mb-6 text-center max-w-4xl mx-auto px-4 overflow-visible">
         {/* Added overflow-visible and slightly more line-height to ensure 'Possibilities' is never clipped. */}
         <h1 className="text-5xl font-bold mb-4 tracking-tight leading-[1.3] py-2 text-white overflow-visible">
@@ -25,11 +32,11 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
       </div>
 
       <div className="flex gap-8 items-center justify-center" role="list">
-        {TOOLS.map((tool) => (
-          <button 
+        {existing.map((tool) => (
+          <button
             key={tool.id}
             role="listitem"
-            aria-label={`${t(tool.id === 'multi_pdf' ? 'multi_pdf' : tool.id === 'permissions' ? 'pdf_security' : 'universal_converter')}: ${t(tool.id === 'multi_pdf' ? 'multi_pdf_desc' : tool.id === 'permissions' ? 'security_desc' : 'universal_desc')}`}
+            aria-label={`${legacyName(tool.id)}: ${legacyDesc(tool.id)}`}
             className="group relative rounded-[2rem] transition-all"
             onClick={() => onSelectTool(tool.id)}
           >
@@ -39,21 +46,46 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
                 {tool.icon}
               </div>
               <div className="text-center">
-                <h3 className="text-lg font-semibold mb-1">{t(tool.id === 'multi_pdf' ? 'multi_pdf' : tool.id === 'permissions' ? 'pdf_security' : 'universal_converter')}</h3>
+                <h3 className="text-lg font-semibold mb-1">{legacyName(tool.id)}</h3>
                 <span className="text-white/20 text-xs uppercase tracking-widest font-bold">{t('tool_label')}</span>
               </div>
             </div>
-            
+
             {/* Tooltip Description */}
-            <div 
+            <div
               className="absolute top-full mt-4 left-0 w-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none text-center"
               aria-hidden="true"
             >
                <p className="text-white/60 text-sm leading-relaxed px-4">
-                  {t(tool.id === 'multi_pdf' ? 'multi_pdf_desc' : tool.id === 'permissions' ? 'security_desc' : 'universal_desc')}
+                  {legacyDesc(tool.id)}
                </p>
             </div>
           </button>
+        ))}
+      </div>
+
+      {/* Additive expansion: categorized grid of new tools, appended below. */}
+      <div className="w-full max-w-6xl mx-auto mt-14 pb-16">
+        <h2 className="text-center text-[0.625em] font-bold uppercase tracking-[0.35em] text-white/30 mb-6">More Tools</h2>
+        {NEW_TOOL_CATEGORIES.map((cat) => (
+          <div key={cat} className="mb-6">
+            <h3 className="text-sm font-bold text-white/60 mb-3 px-2">{cat}</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {NEW_TOOL_DEFS.filter((d) => d.category === cat).map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => onSelectTool(d.id as ToolId)}
+                  className="group liquid-glass rounded-2xl p-4 border border-white/5 text-left hover:border-blue-500/30 transition-all"
+                >
+                  <div className="flex items-center gap-3 mb-1">
+                    <div className="w-8 h-8 shrink-0 [&>svg]:w-8 [&>svg]:h-8 text-white/70">{d.icon}</div>
+                    <span className="text-sm font-bold text-white/90">{d.title}</span>
+                  </div>
+                  <p className="text-[0.6875em] text-white/35 leading-snug">{d.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </div>

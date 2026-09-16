@@ -3,6 +3,7 @@ import React from 'react';
 import { ToolId } from '../types';
 import { TOOLS, LANGUAGES } from '../constants';
 import { translations, LanguageCode } from '../translations';
+import MoreToolsMenu from './newtools/MoreToolsMenu';
 
 interface Props {
   activeTab: 'dashboard' | ToolId;
@@ -60,7 +61,7 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang }
         >
           {t('dashboard')}
         </button>
-        {TOOLS.map((tool) => (
+        {TOOLS.filter((tool) => !tool.hideFromNav).map((tool) => (
           <button
             key={tool.id}
             role="menuitem"
@@ -73,6 +74,8 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang }
             {t(tool.id === 'multi_pdf' ? 'multi_pdf' : tool.id === 'permissions' ? 'pdf_security' : 'universal_converter')}
           </button>
         ))}
+        {/* Additive expansion: overflow menu for the 25 new tools. Existing tabs above are untouched. */}
+        <MoreToolsMenu activeTab={activeTab} setActiveTab={setActiveTab} />
       </div>
 
       <div className="flex items-center gap-4">

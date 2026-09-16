@@ -14,3 +14,44 @@
   background-clip: text;
   -webkit-background-clip: text;
 }
+
+/* ------------------------------------------------------------------
+ * Global button text alignment fix (DELETE button + all other buttons).
+ *
+ * Root cause: buttons were plain block-level elements whose labels relied
+ * on padding + the browser's default `line-height: normal` for vertical
+ * positioning. With the Josefin Sans display font, uppercase labels and
+ * `tracking-widest` letter-spacing, the font's asymmetric ascender/descender
+ * metrics left labels visibly off-center vertically, and icon+text buttons
+ * had no shared alignment axis.
+ *
+ * Fix (no per-button padding hacks): make every button an inline-flex
+ * container with centered alignment and a normalized line-height, so the
+ * label (and any icon) is always vertically centered regardless of button
+ * size, font-size, or state. Explicit Tailwind flex utilities such as
+ * `justify-between` still win where needed because class selectors outrank
+ * this element selector.
+ * ------------------------------------------------------------------ */
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  line-height: 1;
+  vertical-align: middle;
+  text-align: center;
+}
+
+button > svg {
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* Explicit opt-in used by the Generate/Stop action buttons; identical to
+ * the global rule so intent is readable at the call site. */
+.btn-centered {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
