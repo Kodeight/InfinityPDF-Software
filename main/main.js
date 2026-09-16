@@ -308,6 +308,23 @@ ipcMain.handle(
         return { success: false, cancelled: true, results: combinedResults, outputDir };
       }
 
+      // Output validation: flip any claimed success whose file is missing
+      // or empty into an explicit error entry.
+      for (const r of combinedResults) {
+        if (r && r.status === "success") {
+          let ok = false;
+          try {
+            ok = typeof r.path === "string" && fs.existsSync(r.path) && fs.statSync(r.path).size > 0;
+          } catch (e) {
+            ok = false;
+          }
+          if (!ok) {
+            r.status = "error";
+            r.error = "Output validation failed: file missing or empty";
+          }
+        }
+      }
+
       mainWindow.webContents.send("process-progress", 100);
       return { success: true, results: combinedResults, outputDir };
     } catch (err) {
@@ -536,6 +553,20 @@ ipcMain.handle(
           if (universalCancelled) {
             resolve({ success: false, cancelled: true });
           } else if (code === 0) {
+            // Output validation is enforced by backend.universal_convert, but
+            // re-check here so an old backend can never report phantom files.
+            try {
+              const lines = stdout.trim().split('\n');
+              const probe = JSON.parse(lines[lines.length - 1]);
+              if (probe && probe.success && typeof probe.path === "string") {
+                if (!fs.existsSync(probe.path) || fs.statSync(probe.path).size === 0) {
+                  resolve({ success: false, error: "Output validation failed: converted file missing or empty" });
+                  return;
+                }
+              }
+            } catch (e) { /* fall through to normal parsing below */ }
+          }
+          if (code === 0) {
              try {
                 // Try to parse the last line as JSON result
                 const lines = stdout.trim().split('\n');
@@ -604,7 +635,12 @@ const NEW_TOOL_MODULES = [
   "pdf_repair", "pdf_measurement",
 ];
 
-const activeNewToolJobs = new Map(); // jobId -> { process, cancelFile, cancelled }
+const activeNewToolJobs = new Map(); // serverId -> { process, cancelFile, cancelled, clientToken }
+// Renderer-provided ids are opaque routing tokens only; the server mints the
+// authoritative id per job so two simultaneous jobs can never share tracking
+// state, even if the renderer reuses a token.
+const newToolTokenIndex = new Map(); // clientToken -> newest live serverId
+let serverJobSeq = 0;
 
 function resolveNewToolModule(tool) {
   const devPath = path.join(__dirname, "..", "new_tools", `${tool}.py`);
@@ -614,13 +650,34 @@ function resolveNewToolModule(tool) {
   return devPath;
 }
 
-ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, outputDir }) => {
-  // Strict input validation: jobId ends up in a temp flag filename, so it
-  // must not contain path separators or traversal sequences.
-  let id = String(jobId || "");
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
-    id = `job_${Date.now()}`;
+// Vendored Tesseract OCR engine (thirdparty/tesseract). Dev reads the repo
+// copy; the packaged app reads the copy shipped via extraResources. Returns
+// { bin, tessdataDir } with empty strings when not vendored, so the backend
+// falls back to env/PATH engines gracefully.
+function resolveVendoredTesseract() {
+  const empty = { bin: "", tessdataDir: "" };
+  try {
+    const base = app.isPackaged
+      ? path.join(process.resourcesPath || "", "thirdparty", "tesseract")
+      : path.join(__dirname, "..", "thirdparty", "tesseract");
+    const bin = path.join(base, "bin", process.platform === "win32" ? "tesseract.exe" : "tesseract");
+    const tessdataDir = path.join(base, "tessdata");
+    if (!fs.existsSync(bin) || !fs.existsSync(tessdataDir)) return empty;
+    return { bin, tessdataDir };
+  } catch (e) {
+    return empty;
   }
+}
+
+ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, outputDir }) => {
+  // The renderer id is an opaque routing token (used only to route progress
+  // events back to the right panel). The server mints its own unique id for
+  // all tracking state, so token reuse can never collide or overwrite a job.
+  let token = String(jobId || "");
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(token)) {
+    token = `job_${Date.now()}`;
+  }
+  const id = `srv_${Date.now().toString(36)}_${(++serverJobSeq).toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const mod = String(tool || "");
   if (!NEW_TOOL_MODULES.includes(mod) || !/^[a-z_]+$/.test(mod)) {
     return { success: false, error: `Unknown tool: ${mod}` };
@@ -641,6 +698,25 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
 
     const outDir = outputDir || path.join(os.tmpdir(), `InfinityPDF_${mod}`);
     await fs.ensureDir(outDir);
+    // Remember legitimate output locations so get-file-data can scope
+    // previews to files this app actually produced.
+    try { knownOutputDirs.add(path.resolve(outDir)); } catch (e) {}
+
+    // OCR engine injection: hand the backend the vendored Tesseract paths
+    // when present (explicit caller-provided paths always win).
+    let effectiveArgs = args || {};
+    if (mod === "pdf_ocr") {
+      const vendored = resolveVendoredTesseract();
+      if ((vendored.bin || vendored.tessdataDir) && typeof effectiveArgs === "object") {
+        effectiveArgs = { ...effectiveArgs };
+        if (vendored.bin && !effectiveArgs.tesseract_bin) {
+          effectiveArgs.tesseract_bin = vendored.bin;
+        }
+        if (vendored.tessdataDir && !effectiveArgs.tessdata_dir) {
+          effectiveArgs.tessdata_dir = vendored.tessdataDir;
+        }
+      }
+    }
 
     // Executor selection: packaged app uses the frozen newtools-backend.exe
     // (no Python interpreter ships with the installer); development uses
@@ -653,20 +729,21 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
         return { success: false, error: "New-tools backend is not installed with this package." };
       }
       executor = runnerExe;
-      spawnArgs = [mod, op, JSON.stringify(args || {}), outDir];
+      spawnArgs = [mod, op, JSON.stringify(effectiveArgs), outDir];
     } else {
       const modulePath = resolveNewToolModule(mod);
       if (!fs.existsSync(modulePath)) {
         return { success: false, error: `Backend module not found for tool: ${mod}` };
       }
       executor = "python";
-      spawnArgs = [modulePath, op, JSON.stringify(args || {}), outDir];
+      spawnArgs = [modulePath, op, JSON.stringify(effectiveArgs), outDir];
     }
 
     const cancelFile = path.join(os.tmpdir(), `newtool-cancel-${id}.flag`);
     try { if (fs.existsSync(cancelFile)) fs.removeSync(cancelFile); } catch (e) {}
-    const job = { process: null, cancelFile, cancelled: false };
+    const job = { process: null, cancelFile, cancelled: false, clientToken: token };
     activeNewToolJobs.set(id, job);
+    newToolTokenIndex.set(token, id);
 
     const result = await new Promise((resolve) => {
       const proc = spawn(executor, spawnArgs, {
@@ -682,7 +759,9 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
         stdout += text;
         for (const m of text.matchAll(/PROGRESS:(\d+)/g)) {
           try {
-            mainWindow.webContents.send("newtool-progress", { jobId: id, value: parseInt(m[1], 10) });
+            // jobId stays the renderer token so existing panels filter
+            // without changes; serverJobId identifies the authoritative job.
+            mainWindow.webContents.send("newtool-progress", { jobId: token, serverJobId: id, value: parseInt(m[1], 10) });
           } catch (e) {}
         }
       });
@@ -701,7 +780,23 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
           const lines = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
           const resultLines = lines.filter((l) => l.startsWith("RESULT:"));
           if (resultLines.length > 0) {
-            resolve(JSON.parse(resultLines[resultLines.length - 1].slice("RESULT:".length)));
+            const parsed = JSON.parse(resultLines[resultLines.length - 1].slice("RESULT:".length));
+            // Shared output validation (item 6): a success flag alone is not
+            // trusted — every claimed output must exist and be non-empty.
+            if (parsed && parsed.success && Array.isArray(parsed.outputs)) {
+              const bad = parsed.outputs.filter((o) => {
+                try {
+                  return typeof o !== "string" || !fs.existsSync(o) || fs.statSync(o).size === 0;
+                } catch (e) {
+                  return true;
+                }
+              });
+              if (bad.length > 0) {
+                resolve({ success: false, error: `Output validation failed: ${bad.length} missing or empty output file(s)` });
+                return;
+              }
+            }
+            resolve(parsed);
             return;
           }
         } catch (e) {
@@ -723,6 +818,9 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
   } finally {
     const job = activeNewToolJobs.get(id);
     activeNewToolJobs.delete(id);
+    if (newToolTokenIndex.get(token) === id) {
+      newToolTokenIndex.delete(token);
+    }
     try {
       const cf = job && job.cancelFile;
       if (cf && fs.existsSync(cf)) fs.removeSync(cf);
@@ -733,7 +831,8 @@ ipcMain.handle("run-new-tool", async (event, { jobId, tool, operation, args, out
 ipcMain.handle("cancel-new-tool", async (event, { jobId }) => {
   try {
     const lookup = /^[A-Za-z0-9_-]{1,64}$/.test(String(jobId || "")) ? String(jobId) : "";
-    const job = activeNewToolJobs.get(lookup);
+    const serverId = newToolTokenIndex.get(lookup);
+    const job = serverId ? activeNewToolJobs.get(serverId) : undefined;
     if (!job) return { success: true, note: "no active job" };
     job.cancelled = true;
     try { fs.ensureFileSync(job.cancelFile); } catch (e) {}
@@ -758,13 +857,52 @@ ipcMain.handle("cancel-new-tool", async (event, { jobId }) => {
   }
 });
 
-// Preview helper: read a local image file and return a data URL so <img>
-// panes work identically in dev (http:// origin, where file:// is blocked)
-// and in the packaged app. Size-capped; binary-safe (base64, no decoding).
+// Directories the app itself created outputs in during this session.
+// get-file-data only serves files from these (plus the OS temp dir), so a
+// compromised renderer cannot use the bridge to read arbitrary user files.
+const knownOutputDirs = new Set();
+
+function isPathUnderDir(filePath, dir) {
+  try {
+    const rel = path.relative(path.resolve(dir), path.resolve(filePath));
+    return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+  } catch (e) {
+    return false;
+  }
+}
+
+function isPreviewAllowed(filePath) {
+  const os = require("os");
+  if (isPathUnderDir(filePath, os.tmpdir())) return true;
+  for (const dir of knownOutputDirs) {
+    if (isPathUnderDir(filePath, dir)) return true;
+  }
+  return false;
+}
+
+// Preview helper: read a backend-generated preview image and return a data
+// URL so <img> panes work identically in dev (http:// origin, where file://
+// is blocked) and in the packaged app. Images only, size-capped, and scoped
+// to known output locations (see above).
 ipcMain.handle("get-file-data", async (event, { filePath }) => {
   try {
     if (typeof filePath !== "string" || !filePath) {
       return { success: false, error: "Invalid path" };
+    }
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = {
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".webp": "image/webp",
+      ".bmp": "image/bmp",
+      ".gif": "image/gif",
+    }[ext];
+    if (!mime) {
+      return { success: false, error: "Preview supports image files only" };
+    }
+    if (!isPreviewAllowed(filePath)) {
+      return { success: false, error: "Preview is limited to application output files" };
     }
     let stat = null;
     try {
@@ -778,15 +916,6 @@ ipcMain.handle("get-file-data", async (event, { filePath }) => {
     if (stat.size > 15 * 1024 * 1024) {
       return { success: false, error: "File too large for preview (max 15 MB)" };
     }
-    const ext = path.extname(filePath).toLowerCase();
-    const mime = {
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".webp": "image/webp",
-      ".bmp": "image/bmp",
-      ".gif": "image/gif",
-    }[ext] || "application/octet-stream";
     const data = await fs.readFile(filePath, { encoding: "base64" });
     return { success: true, dataUrl: `data:${mime};base64,${data}` };
   } catch (err) {

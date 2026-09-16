@@ -29,18 +29,55 @@ import subprocess
 import tempfile
 
 _MISSING_MSG = (
-    "Required OCR engine is unavailable (install Tesseract OCR and ocrmypdf "
-    "to enable searchable-PDF / text OCR). "
+    "Required OCR engine is unavailable. InfinityPDF ships an optional "
+    "vendored Tesseract bundle (see thirdparty/tesseract/README.md); "
+    "otherwise install Tesseract OCR and ocrmypdf to enable searchable-PDF / "
+    "text OCR. "
     "See https://tesseract-ocr.github.io/ and https://ocrmypdf.readthedocs.io/ ."
 )
+
+# Vendored-engine discovery. Precedence (first usable wins):
+#   1. explicit `tesseract_bin` argument (Electron injects the vendored path)
+#   2. INFINITYPDF_TESSERACT environment variable
+#   3. system PATH (`tesseract`)
+# An explicit `tessdata_dir` (or TESSDATA_PREFIX) points at eng/ara/fra
+# language data so the install is fully offline.
 
 # ---------------------------------------------------------------------------
 # CHECK LAYER (detection only — safe to call anywhere, never crashes)
 # ---------------------------------------------------------------------------
 
-def _detect_engines():
+def _is_executable(path):
+    return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def _resolve_tesseract(explicit=None):
+    """Return (binary_path_or_None, source) with source in
+    {'bundled', 'env', 'path', 'none'}."""
+    if explicit and _is_executable(explicit):
+        return explicit, "bundled"
+    env_bin = os.environ.get("INFINITYPDF_TESSERACT", "")
+    if env_bin and _is_executable(env_bin):
+        return env_bin, "env"
+    path_bin = shutil.which("tesseract")
+    if path_bin:
+        return path_bin, "path"
+    return None, "none"
+
+
+def _resolve_tessdata(explicit=None):
+    if explicit and os.path.isdir(explicit):
+        return explicit
+    env_dir = os.environ.get("TESSDATA_PREFIX", "")
+    if env_dir and os.path.isdir(env_dir):
+        return env_dir
+    return ""
+
+
+def _detect_engines(explicit_bin=None, explicit_data=None):
     """Detect optional OCR engines. Never raises for missing pieces."""
-    tesseract_bin = shutil.which("tesseract")
+    tesseract_bin, tess_source = _resolve_tesseract(explicit_bin)
+    tessdata_dir = _resolve_tessdata(explicit_data) if tesseract_bin else ""
     ocrmypdf_bin = shutil.which("ocrmypdf")
     try:
         import pytesseract  # noqa: F401
@@ -68,17 +105,23 @@ def _detect_engines():
     return {
         "tesseract_available": bool(tesseract_available),
         "tesseract_path": tesseract_bin or "",
-        "ocrmypdf_available": bool(ocrmypdf_available),
+        "tesseract_source": tess_source,
+        "tessdata_dir": tessdata_dir,
+        "bundled": tess_source == "bundled",
+        "ocrmypdf_available": bool(ocrmypdf_bin),
         "ocrmypdf_path": ocrmypdf_bin or "",
         "pytesseract_available": bool(has_pytesseract),
         "languages": sorted(set(languages)),
     }
 
 
-def _check_requirements():
-    """Return (engine_name, status) where engine_name is 'ocrmypdf',
-    'pytesseract' or None when nothing usable is installed."""
-    st = _detect_engines()
+def _check_requirements(explicit_bin=None, explicit_data=None):
+    """Return (engine_name, status). Preference order:
+    vendored/system tesseract CLI (no Python deps) -> ocrmypdf ->
+    pytesseract+tesseract. None when nothing usable is installed."""
+    st = _detect_engines(explicit_bin, explicit_data)
+    if st["tesseract_available"]:
+        return "tesseract-cli", st
     if st["ocrmypdf_available"]:
         return "ocrmypdf", st
     if st["pytesseract_available"] and st["tesseract_available"]:
@@ -115,6 +158,41 @@ def _run_ocrmypdf(src_pdf, dst_pdf, lang_str, workdir):
         raise RuntimeError(f"ocrmypdf failed (exit {proc.returncode}): {detail}")
     if not os.path.exists(dst_pdf):
         raise RuntimeError("ocrmypdf finished but produced no output file")
+
+
+def _tesseract_env(tessdata_dir):
+    """Environment for the tesseract child: offline language data first."""
+    env = dict(os.environ)
+    if tessdata_dir:
+        env["TESSDATA_PREFIX"] = tessdata_dir
+    return env
+
+
+def _run_tesseract_cli(tesseract_bin, tessdata_dir, src_pdf, dst_base, lang_str,
+                       mode, workdir):
+    """Direct Tesseract CLI pipeline (no ocrmypdf, no pytesseract needed).
+
+    searchable: `tesseract in.pdf outbase -l langs pdf` (text layer over the
+    original pages, appearance preserved byte-for-byte where possible).
+    txt:        `tesseract in.pdf outbase -l langs txt`.
+    """
+    out_ext = "pdf" if mode == "searchable" else "txt"
+    cmd = [tesseract_bin, src_pdf, dst_base, "-l", lang_str or "eng", out_ext]
+    log(f"running tesseract CLI ({os.path.basename(tesseract_bin)} ... -l {lang_str} {out_ext})")
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=1800,
+            cwd=workdir, env=_tesseract_env(tessdata_dir),
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("tesseract timed out")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "")[-2000:]
+        raise RuntimeError(f"tesseract failed (exit {proc.returncode}): {detail}")
+    produced = dst_base + (".pdf" if mode == "searchable" else ".txt")
+    if not os.path.exists(produced):
+        raise RuntimeError("tesseract finished but produced no output file")
+    return produced
 
 
 def _run_pytesseract_pipeline(src_pdf, page_idxs, lang_str, mode, dst_base, total_pages):
@@ -201,15 +279,19 @@ def _run_pytesseract_pipeline(src_pdf, page_idxs, lang_str, mode, dst_base, tota
 # ---------------------------------------------------------------------------
 
 def op_engines(args, outdir):
-    st = _detect_engines()
+    st = _detect_engines(args.get("tesseract_bin"), args.get("tessdata_dir"))
     note = (
-        "Detection only: ocrmypdf binary and/or Tesseract OCR binary + "
-        "pytesseract package enable the 'ocr' op. "
-        "Preferred engine is ocrmypdf; fallback is pytesseract + tesseract. "
-        "No engine is bundled with InfinityPDF."
+        "Detection only. Engine preference: vendored/system Tesseract CLI "
+        "(no Python deps) > ocrmypdf > pytesseract+tesseract. "
+        "InfinityPDF can ship a vendored Tesseract bundle "
+        "(thirdparty/tesseract/README.md) so customers install nothing; "
+        "otherwise a system Tesseract/ocrmypdf is used when present."
     )
     return {"outputs": [], "info": {
         "tesseract_available": st["tesseract_available"],
+        "tesseract_source": st["tesseract_source"],
+        "bundled": st["bundled"],
+        "tessdata_dir": st["tessdata_dir"],
         "ocrmypdf_available": st["ocrmypdf_available"],
         "pytesseract_available": st["pytesseract_available"],
         "languages": st["languages"],
@@ -232,7 +314,8 @@ def op_ocr(args, outdir):
         raise ValueError("mode must be 'searchable' or 'txt'")
 
     # ---- CHECK phase (no OCR work starts here) ----
-    engine, st = _check_requirements()
+    engine, st = _check_requirements(args.get("tesseract_bin"),
+                                     args.get("tessdata_dir"))
     if engine is None:
         return {
             "success": False,
@@ -246,6 +329,8 @@ def op_ocr(args, outdir):
             },
         }
     lang_str = "+".join(langs)
+    tess_bin = st.get("tesseract_path", "")
+    tess_data = st.get("tessdata_dir", "")
 
     # ---- RUN phase ----
     workdir = tempfile.mkdtemp(prefix="ipdf_ocr_")
@@ -264,6 +349,39 @@ def op_ocr(args, outdir):
         else:
             idxs = parse_pages(pages_spec, total)
         progress(5)
+
+        if engine == "tesseract-cli":
+            import fitz as _fitz
+            if len(idxs) == total:
+                src_for_ocr = pdf
+            else:
+                src_for_ocr = os.path.join(workdir, "subset.pdf")
+                s = _fitz.open(pdf)
+                try:
+                    sub = _fitz.open()
+                    try:
+                        for pi in idxs:
+                            check_cancel()
+                            sub.insert_pdf(s, from_page=pi, to_page=pi)
+                        sub.save(src_for_ocr)
+                    finally:
+                        sub.close()
+                finally:
+                    s.close()
+            dst_base = unique_path(outdir, "ocr_searchable" if mode == "searchable" else "ocr",
+                                   "pdf" if mode == "searchable" else "txt")
+            if dst_base.lower().endswith((".pdf", ".txt")):
+                dst_base = dst_base[:dst_base.rfind(".")]
+            progress(15)
+            check_cancel()
+            out_file = _run_tesseract_cli(tess_bin, tess_data, src_for_ocr,
+                                          dst_base, lang_str, mode, workdir)
+            progress(100)
+            return {"outputs": [out_file], "info": {
+                "engine": "tesseract-cli", "mode": mode, "langs": langs,
+                "pages": [i + 1 for i in idxs],
+                "bundled": st.get("bundled", False),
+            }}
 
         if engine == "ocrmypdf":
             import fitz as _fitz

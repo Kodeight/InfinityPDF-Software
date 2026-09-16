@@ -1,10 +1,21 @@
 #!/usr/bin/env python3
-"""PDF EDITOR — vector-preserving annotations, drawings and page ops (new tool, additive).
+"""PDF EDITOR — vector-preserving annotations, TRUE text replacement, page ops.
 
 CLI: python pdf_editor.py <operation> <args-json> <output-dir>
 Ops:
   render{pdf,page,dpi} -> PNG preview of 1-based page + info{w_pt,h_pt}
-  apply{pdf,edits[],page_ops[]} -> new PDF + info{edits_applied}
+  inspect_text{pdf,page|pages} -> selectable text spans per page
+  replace_text{pdf,replacements[{page,span_id|rect,new_text}]} -> new PDF,
+    old glyphs truly removed (redaction), replacement set in the original
+    font where reusable (Base-14 or extracted embedded subset), per-item
+    verification + honest warnings
+  delete_text{pdf,targets[{page,span_id|rect}]} -> new PDF with spans removed
+  apply{pdf,edits[],page_ops[],text_edits[]} -> new PDF + full report
+
+Scope/limits (do not oversell): single-line in-place replacement only;
+replacement must fit the original line (auto-shrink to a 60% floor, else a
+clear error); complex-script shaping is not applied; pages without a text
+layer (scans, outlined text) are reported, not faked.
 
 Edit record: {kind[text,note,highlight,underline,strike,rect,circle,line,arrow,draw,image],
   page(1-based), x0,y0,x1,y1 (PDF points, origin top-left),
@@ -59,6 +70,307 @@ def _resolve_pages(spec, total):
         return sorted(out)
     from _common import parse_pages
     return parse_pages(str(spec), total)
+
+
+STD_FONTS = {
+    # PDF Base-14 name (as reported in span["font"]) -> fitz fontname alias.
+    "courier": "cour", "courier-bold": "courbo",
+    "courier-oblique": "courro", "courier-boldoblique": "courboo",
+    "helvetica": "helv", "helvetica-bold": "hebo",
+    "helvetica-oblique": "helvo", "helvetica-boldoblique": "heboo",
+    "times-roman": "tiro", "times-bold": "tibo",
+    "times-italic": "tiit", "times-bolditalic": "tibi",
+    "symbol": "symb", "zapfdingbats": "zadb",
+}
+
+_AR_RTL_RE = None
+
+
+def _rtl_re():
+    global _AR_RTL_RE
+    if _AR_RTL_RE is None:
+        import re
+        _AR_RTL_RE = re.compile(r"[\u0590-\u08FF]")
+    return _AR_RTL_RE
+
+
+def _span_list(page):
+    """Selectable text spans on a page: [{id, text, font, size, color, bbox}]."""
+    out = []
+    try:
+        data = page.get_text("dict")
+    except Exception as e:
+        raise ValueError(f"Could not read page text layer: {e}")
+    for b in data.get("blocks", []):
+        if b.get("type", 0) != 0:
+            continue
+        for line in b.get("lines", []):
+            for s in line.get("spans", []):
+                text = s.get("text", "")
+                if not text.strip():
+                    continue
+                bbox = s.get("bbox", [0, 0, 0, 0])
+                out.append({
+                    "id": len(out),
+                    "text": text,
+                    "font": str(s.get("font", "")),
+                    "size": round(float(s.get("size", 0) or 0), 2),
+                    "color": int(s.get("color", 0) or 0),
+                    "bbox": {"x0": bbox[0], "y0": bbox[1],
+                             "x1": bbox[2], "y1": bbox[3]},
+                })
+    return out
+
+
+def op_inspect_text(args, outdir):
+    from _common import parse_pages
+    pdf = validate_pdf(require_arg(args, "pdf"))
+    doc = fitz.open(pdf)
+    try:
+        total = len(doc)
+        pages_spec = args.get("pages", args.get("page", "all"))
+        if isinstance(pages_spec, int):
+            pages = [pages_spec - 1]
+        else:
+            pages = parse_pages(pages_spec, total)
+        spans_by_page = {}
+        for pno in pages:
+            check_cancel()
+            spans_by_page[str(pno + 1)] = _span_list(doc[pno])
+        progress(100)
+        return {"outputs": [], "info": {"pages": total, "spans": spans_by_page}}
+    finally:
+        doc.close()
+
+
+def _srgb_to_frac(color_int):
+    try:
+        v = int(color_int)
+    except Exception:
+        v = 0
+    return ((v >> 16 & 255) / 255.0, (v >> 8 & 255) / 255.0, (v & 255) / 255.0)
+
+
+def _resolve_replacement_font(doc, page, span_font, workdir):
+    """Return (kind, fontname_or_file, warnings[]).
+
+    kind: 'standard' (Base-14 alias), 'embedded' (extracted font file),
+    'fallback' (helv + warning).
+    """
+    base = span_font.split("+")[-1].strip()
+    alias = STD_FONTS.get(base.lower())
+    if alias:
+        return "standard", alias, []
+    # Try the embedded subset: match span font against page fonts, extract.
+    try:
+        for f in page.get_fonts(full=True):
+            xref, _ext, _type, basefont = f[0], f[1], f[2], f[3]
+            if str(basefont).split("+")[-1].lower() == base.lower():
+                raw = doc.extract_font(xref)
+                if isinstance(raw, dict):
+                    ext, content = raw.get("ext", "ttf"), raw.get("content", b"")
+                else:
+                    ext, content = (raw[1] if len(raw) > 1 else "ttf",
+                                    raw[3] if len(raw) > 3 else b"")
+                if content:
+                    import uuid as _uuid
+                    fpath = os.path.join(workdir, f"emb_{_uuid.uuid4().hex}.{ext}")
+                    with open(fpath, "wb") as fh:
+                        fh.write(content)
+                    return "embedded", fpath, []
+    except Exception as e:
+        log(f"embedded font extract skipped ({span_font}): {e}")
+    return ("fallback", "helv",
+            [f"Original font '{span_font}' is not reusable; replacement uses Helvetica."])
+
+
+def _replace_span_text(doc, page, span, new_text, workdir, label):
+    """True replacement: remove old glyphs, insert new text, verify both."""
+    warnings = []
+    if _rtl_re().search(new_text or ""):
+        warnings.append("Replacement contains right-to-left/complex script; "
+                        "glyph shaping is not applied by this engine.")
+    rect = fitz.Rect(span["bbox"]["x0"], span["bbox"]["y0"],
+                     span["bbox"]["x1"], span["bbox"]["y1"])
+    if rect.width <= 0 or rect.height <= 0:
+        raise ValueError(f"{label}: span has an empty bounding box")
+    size = float(span.get("size") or 12)
+    if size <= 0:
+        size = 12
+    method, fontref, fwarns = _resolve_replacement_font(
+        doc, page, span.get("font", ""), workdir)
+    warnings.extend(fwarns)
+    color = _srgb_to_frac(span.get("color", 0))
+
+    # Fit check on a single line: shrink to a 60% floor, else refuse rather
+    # than silently overflowing the original layout. Measurement uses a
+    # fitz.Font object because get_text_length() has no fontfile support.
+    try:
+        if method == "embedded":
+            measure_font = fitz.Font(fontfile=fontref)
+        else:
+            measure_font = fitz.Font(fontname=fontref)
+    except Exception as e:
+        raise ValueError(f"{label}: cannot load replacement font ({e})")
+
+    def _measure(text, fsize):
+        return measure_font.text_length(text, fontsize=fsize)
+
+    trial_size = size
+    insert_kwargs = {"fontsize": trial_size, "color": color, "align": 0}
+    if method == "embedded":
+        insert_kwargs["fontfile"] = fontref
+    else:
+        insert_kwargs["fontname"] = fontref
+    while trial_size >= size * 0.6:
+        insert_kwargs["fontsize"] = trial_size
+        try:
+            need = _measure(new_text, trial_size)
+        except Exception:
+            need = rect.width  # measure failed: attempt at current size once
+            trial_size = size * 0.6 - 1
+            continue
+        if need <= rect.width or trial_size <= size * 0.6 + 1e-9:
+            break
+        trial_size *= 0.9
+    if trial_size < size:
+        warnings.append(f"Replacement scaled to {trial_size:.1f}pt to fit the original line width.")
+    try:
+        final_need = _measure(new_text, insert_kwargs["fontsize"])
+    except Exception:
+        final_need = 0
+    if final_need > rect.width * 1.02:
+        raise ValueError(f"{label}: replacement is too long for the original layout "
+                         f"(needs wider line). Split it or shorten the text.")
+
+    page.add_redact_annot(rect)
+    page.apply_redactions()
+    gone = new_text not in page.get_text("text")  # sanity: old text must be gone
+    # Insert rect: span bboxes hug the glyphs too tightly for insert_textbox
+    # leading (verified: it needs ~2x fontsize of vertical room). Anchor at
+    # the original top so nothing bleeds into the previous line; extend down
+    # as needed. Width is unchanged to preserve horizontal layout. The
+    # redaction above stays exact so neighbors are untouched.
+    irect = fitz.Rect(rect.x0, rect.y0,
+                       rect.x1, rect.y0 + max(rect.height, size * 2.0))
+    left = page.insert_textbox(irect, new_text, **insert_kwargs)
+    if left < 0:
+        raise ValueError(f"{label}: replacement did not fit after fit check")
+    return {"method": method, "font_size": round(insert_kwargs["fontsize"], 1),
+            "warnings": warnings, "old_gone": bool(gone)}
+
+
+def _find_span(spans, ref, label):
+    if isinstance(ref, int):
+        if 0 <= ref < len(spans):
+            return spans[ref]
+        raise ValueError(f"{label}: span_id {ref} out of range (page has {len(spans)} spans)")
+    if isinstance(ref, dict) and all(k in ref for k in ("x0", "y0", "x1", "y1")):
+        r = fitz.Rect(ref["x0"], ref["y0"], ref["x1"], ref["y1"])
+        best, best_overlap = None, 0.0
+        for s in spans:
+            b = s["bbox"]
+            sr = fitz.Rect(b["x0"], b["y0"], b["x1"], b["y1"])
+            inter = r & sr
+            overlap = inter.get_area() / (sr.get_area() or 1.0)
+            if overlap > best_overlap:
+                best, best_overlap = s, overlap
+        if best is None or best_overlap <= 0:
+            raise ValueError(f"{label}: no text span overlaps the given rect")
+        return best
+    raise ValueError(f"{label}: need span_id (int) or rect {{x0,y0,x1,y1}}")
+
+
+def op_replace_text(args, outdir):
+    from _common import temp_workdir
+    import shutil
+    pdf = validate_pdf(require_arg(args, "pdf"))
+    replacements = require_arg(args, "replacements")
+    if not isinstance(replacements, list) or not replacements:
+        raise ValueError("'replacements' must be a non-empty array")
+    workdir = temp_workdir("ipdf_txtedit_")
+    doc = fitz.open(pdf)
+    try:
+        report = []
+        for i, rep in enumerate(replacements):
+            check_cancel()
+            label = f"replacements[{i}]"
+            if not isinstance(rep, dict):
+                raise ValueError(f"{label} must be an object")
+            pno = int(rep.get("page", 1))
+            if pno < 1 or pno > len(doc):
+                raise ValueError(f"{label}.page out of bounds")
+            new_text = rep.get("new_text", "")
+            if not isinstance(new_text, str) or not new_text:
+                raise ValueError(f"{label}.new_text must be a non-empty string")
+            ref = rep.get("span_id", rep.get("rect", None))
+            page = doc[pno - 1]
+            spans = _span_list(page)
+            if not spans:
+                raise ValueError(f"{label}: page {pno} has no selectable text "
+                                 "(scanned image or outlined text cannot be edited this way)")
+            span = _find_span(spans, ref, label)
+            detail = _replace_span_text(doc, page, span, new_text, workdir, label)
+            # Verify: old span text gone, new text present on the page.
+            after = page.get_text("text")
+            old_gone = span["text"] not in after
+            new_here = new_text in after
+            if not (old_gone and new_here):
+                raise ValueError(f"{label}: post-edit verification failed "
+                                 f"(old_gone={old_gone}, new_present={new_here})")
+            report.append({"page": pno, "span_id": span["id"], "ok": True, **detail})
+            progress(int(((i + 1) / len(replacements)) * 90))
+        out = unique_path(outdir, "edited_text", "pdf")
+        doc.save(out, garbage=4, deflate=True)
+        progress(100)
+        return {"outputs": [out], "info": {"replaced": report, "count": len(report)}}
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def op_delete_text(args, outdir):
+    pdf = validate_pdf(require_arg(args, "pdf"))
+    targets = require_arg(args, "targets")
+    if not isinstance(targets, list) or not targets:
+        raise ValueError("'targets' must be a non-empty array")
+    doc = fitz.open(pdf)
+    try:
+        report = []
+        for i, tgt in enumerate(targets):
+            check_cancel()
+            label = f"targets[{i}]"
+            if not isinstance(tgt, dict):
+                raise ValueError(f"{label} must be an object")
+            pno = int(tgt.get("page", 1))
+            if pno < 1 or pno > len(doc):
+                raise ValueError(f"{label}.page out of bounds")
+            ref = tgt.get("span_id", tgt.get("rect", None))
+            page = doc[pno - 1]
+            spans = _span_list(page)
+            if not spans:
+                raise ValueError(f"{label}: page {pno} has no selectable text")
+            span = _find_span(spans, ref, label)
+            b = span["bbox"]
+            page.add_redact_annot(fitz.Rect(b["x0"], b["y0"], b["x1"], b["y1"]))
+            page.apply_redactions()
+            gone = span["text"] not in page.get_text("text")
+            if not gone:
+                raise ValueError(f"{label}: text still extractable after removal")
+            report.append({"page": pno, "span_id": span["id"], "ok": True})
+            progress(int(((i + 1) / len(targets)) * 90))
+        out = unique_path(outdir, "deleted_text", "pdf")
+        doc.save(out, garbage=4, deflate=True)
+        progress(100)
+        return {"outputs": [out], "info": {"deleted": report, "count": len(report)}}
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
 
 
 def op_render(args, outdir):
@@ -248,14 +560,47 @@ def _apply_single_edit(page, edit, idx):
 
 
 def op_apply(args, outdir):
+    from _common import temp_workdir
+    import shutil
     pdf = validate_pdf(require_arg(args, "pdf"))
     edits = args.get("edits", []) or []
     page_ops = args.get("page_ops", []) or []
+    text_edits = args.get("text_edits", []) or []
     if not isinstance(edits, list) or not isinstance(page_ops, list):
         raise ValueError("'edits' and 'page_ops' must be arrays")
+    if not isinstance(text_edits, list):
+        raise ValueError("'text_edits' must be an array")
     doc = fitz.open(pdf)
+    workdir = temp_workdir("ipdf_txtedit_")
     try:
         doc = _apply_page_ops(doc, page_ops)
+        progress(30)
+        # True text replacement runs before overlay edits so annotations
+        # drawn by the user sit on top of the replaced text.
+        text_report = []
+        for i, rep in enumerate(text_edits):
+            check_cancel()
+            if not isinstance(rep, dict):
+                raise ValueError(f"text_edits[{i}] must be an object")
+            pno = int(rep.get("page", 1))
+            if pno < 1 or pno > len(doc):
+                raise ValueError(f"text_edits[{i}].page out of bounds")
+            new_text = rep.get("new_text", "")
+            if not isinstance(new_text, str) or not new_text:
+                raise ValueError(f"text_edits[{i}].new_text must be a non-empty string")
+            page = doc[pno - 1]
+            spans = _span_list(page)
+            if not spans:
+                raise ValueError(f"text_edits[{i}]: page {pno} has no selectable text")
+            span = _find_span(spans, rep.get("span_id", rep.get("rect", None)),
+                              f"text_edits[{i}]")
+            detail = _replace_span_text(doc, page, span, new_text, workdir,
+                                        f"text_edits[{i}]")
+            after = page.get_text("text")
+            if span["text"] in after or new_text not in after:
+                raise ValueError(f"text_edits[{i}]: post-edit verification failed")
+            text_report.append({"page": pno, "span_id": span["id"], "ok": True, **detail})
+            progress(30 + int(((i + 1) / max(len(text_edits), 1)) * 15))
         progress(45)
         total = len(doc)
         applied = 0
@@ -275,6 +620,7 @@ def op_apply(args, outdir):
         doc.save(out, garbage=4, deflate=True)
         progress(100)
         return {"outputs": [out], "info": {"edits_applied": applied, "edit_count": len(edits),
+                                           "text_edits_applied": text_report,
                                            "page_ops_applied": len(page_ops), "pages": len(doc),
                                            "pages_before": total}}
     finally:
@@ -282,9 +628,12 @@ def op_apply(args, outdir):
             doc.close()
         except Exception:
             pass
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
-OPS = {"render": op_render, "apply": op_apply}
+OPS = {"render": op_render, "apply": op_apply,
+       "inspect_text": op_inspect_text, "replace_text": op_replace_text,
+       "delete_text": op_delete_text}
 
 if __name__ == "__main__":
     run_tool(OPS)

@@ -53,3 +53,6 @@ __pycache__/
 # Local outputs and heavyweight one-off binaries (kept on disk, not in git)
 InfinityPDF_Output/
 vs_BuildTools.exe
+# Vendored OCR engine binaries/language data (see thirdparty/tesseract/README.md)
+thirdparty/tesseract/bin/
+thirdparty/tesseract/tessdata/*.traineddata

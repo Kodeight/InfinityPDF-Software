@@ -23,6 +23,15 @@ import tempfile
 import traceback
 import uuid
 
+# Windows consoles default to cp1252, which cannot emit Arabic/CJK text in
+# RESULT JSON (spans, table cells, OCR output). Force UTF-8 so the protocol
+# stays intact; Node decodes child stdout as UTF-8 on the Electron side.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
 
 class Cancelled(Exception):
     pass
@@ -160,6 +169,54 @@ def temp_workdir(prefix="ipdf_new_"):
     return d
 
 
+def _verify_single_output(path):
+    """Exists, non-empty, and openable as PDF when applicable."""
+    if not isinstance(path, str) or not path:
+        return "output entry is not a path"
+    if not os.path.exists(path):
+        return f"output file was not created: {path}"
+    try:
+        if os.path.getsize(path) == 0:
+            return f"output file is empty: {path}"
+    except Exception as e:
+        return f"cannot stat output file: {path} ({e})"
+    if path.lower().endswith(".pdf"):
+        try:
+            import fitz
+        except Exception:
+            return None  # pdf engine unavailable; existence check stands
+        try:
+            doc = fitz.open(path)
+            try:
+                if len(doc) < 1:
+                    return f"PDF has no pages: {path}"
+            finally:
+                doc.close()
+        except Exception as e:
+            return f"output is not a readable PDF: {path} ({e})"
+    return None
+
+
+def verify_result_outputs(result):
+    """Shared output-validation strategy (item 6).
+
+    A zero exit code or a success flag from an operation must never alone
+    mean success. Every claimed output is verified before the RESULT line
+    is emitted. Returns (ok, error_message).
+    """
+    outputs = result.get("outputs", [])
+    if not isinstance(outputs, list):
+        return False, "operation returned malformed outputs (not a list)"
+    problems = []
+    for item in outputs:
+        problem = _verify_single_output(item)
+        if problem:
+            problems.append(problem)
+    if problems:
+        return False, "Output validation failed: " + "; ".join(problems[:5])
+    return True, ""
+
+
 def run_tool(ops):
     """Dispatch helper. ops: {name: fn(args, outdir) -> dict}."""
     op, args, outdir = read_args()
@@ -174,6 +231,12 @@ def run_tool(ops):
         result.setdefault("success", True)
         result.setdefault("outputs", [])
         result.setdefault("info", {})
+        if result.get("success"):
+            ok, problem = verify_result_outputs(result)
+            if not ok:
+                log(f"Output validation failed for '{op}': {problem}")
+                result = {"success": False, "error": problem,
+                          "outputs": [], "info": result.get("info", {})}
         log(f"Finished '{op}'")
         emit_result(result)
     except Cancelled as e:

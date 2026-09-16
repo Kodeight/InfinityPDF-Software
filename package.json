@@ -68,6 +68,10 @@
       {
         "from": "backend-dist/newtools-backend.exe",
         "to": "newtools-backend.exe"
+      },
+      {
+        "from": "thirdparty/tesseract",
+        "to": "thirdparty/tesseract"
       }
     ],
     "directories": {

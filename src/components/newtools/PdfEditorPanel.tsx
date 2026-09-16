@@ -11,7 +11,7 @@ interface Props {
 
 interface EditObj {
   uid: number;
-  kind: string;
+  kind: string; // overlay kinds + 'textedit' (true replacement of existing text)
   page: number;
   x0: number; y0: number; x1: number; y1: number; // display px
   text?: string;
@@ -20,13 +20,22 @@ interface EditObj {
   points?: number[][];
   imagePath?: string;
   imageName?: string;
+  spanId?: number;
+}
+
+interface TextSpan {
+  id: number;
+  text: string;
+  font: string;
+  size: number;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
 const el = () => (window as any).electron;
 let uidSeq = 1;
 let jobSeq = 0;
 
-const TOOLS = ['select', 'text', 'note', 'highlight', 'underline', 'strike', 'rect', 'circle', 'line', 'arrow', 'draw', 'image'];
+const TOOLS = ['select', 'edittext', 'text', 'note', 'highlight', 'underline', 'strike', 'rect', 'circle', 'line', 'arrow', 'draw', 'image'];
 const COLORS = ['#111111', '#cc0000', '#0066cc', '#009900', '#ff9900', '#9900cc', '#ffffff'];
 
 const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
@@ -53,6 +62,8 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
   const [draft, setDraft] = useState<any>(null);
   const strokeRef = useRef<number[][]>([]);
   const [imgPick, setImgPick] = useState('');
+  const [spans, setSpans] = useState<TextSpan[]>([]);
+  const [pendingTextEdit, setPendingTextEdit] = useState<TextSpan | null>(null);
 
   useEffect(() => {
     let off: (() => void) | undefined;
@@ -103,6 +114,8 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
       setObjects([]);
       setPageOps([]);
       setOutFiles([]);
+      setPendingTextEdit(null);
+      setSpans([]);
       addLog(`Opened ${f.name}`, 'success');
     };
     inp.click();
@@ -132,6 +145,21 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
     renderTimer.current = setTimeout(() => { renderPage(page, dpi); }, 250);
     return () => { if (renderTimer.current) clearTimeout(renderTimer.current); };
   }, [pdfPath, page, dpi, renderPage]);
+
+  // Selectable text spans for true text replacement (edittext mode).
+  useEffect(() => {
+    setPendingTextEdit(null);
+    if (!pdfPath) { setSpans([]); return; }
+    let live = true;
+    (async () => {
+      const res = await runBackend('inspect_text', { pdf: pdfPath, page }, true);
+      if (!live) return;
+      const list = res?.info?.spans?.[String(page)] || [];
+      setSpans(Array.isArray(list) ? list : []);
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pdfPath, page]);
 
   const k = () => 72 / dpi; // display-px -> pdf-pt (preview rendered at dpi)
   const toPts = (x: number, y: number) => {
@@ -166,10 +194,31 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
     return { x: e.clientX - (box?.left || 0), y: e.clientY - (box?.top || 0) };
   };
 
+  // Display px -> PDF points (preview rendered at dpi).
+  const pxToPts = (x: number, y: number) => {
+    const im = overlayRef.current?.querySelector('img');
+    const nat = (im as HTMLImageElement)?.naturalWidth || 1;
+    const cli = overlayRef.current?.clientWidth || 1;
+    return [x * (nat / cli) * k(), y * (nat / cli) * k()];
+  };
+
   const onDown = (e: React.PointerEvent) => {
     if (!img || tool === 'select') return;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const p = posIn(e);
+    if (tool === 'edittext') {
+      // Hit-test selectable spans (converted to PDF points for comparison).
+      const [qx, qy] = pxToPts(p.x, p.y);
+      const hit = spans.find((s) => qx >= s.bbox.x0 && qx <= s.bbox.x1 && qy >= s.bbox.y0 && qy <= s.bbox.y1);
+      if (hit) {
+        setPendingTextEdit(hit);
+        setTextDraft(hit.text);
+      } else {
+        addLog(spans.length ? 'Click directly on a highlighted text line.' : 'This page has no selectable text (scan or outlined text).', 'info');
+      }
+      startRef.current = null;
+      return;
+    }
     startRef.current = p;
     if (tool === 'draw') { strokeRef.current = [[p.x, p.y]]; setDraft({ stroke: [[p.x, p.y]] }); }
     else if (tool === 'text' || tool === 'note' || tool === 'image') {
@@ -212,6 +261,32 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
     setPendingPlace(p);
     setTextDraft('');
   };
+  const confirmTextEdit = () => {
+    if (!pendingTextEdit || !textDraft.trim()) { setPendingTextEdit(null); return; }
+    if (textDraft === pendingTextEdit.text) { setPendingTextEdit(null); return; }
+    const b = pendingTextEdit.bbox;
+    // Display-px box for the objects list/overlay (backend uses span_id).
+    const im = overlayRef.current?.querySelector('img');
+    const nat = (im as HTMLImageElement)?.naturalWidth || 1;
+    const cli = overlayRef.current?.clientWidth || 1;
+    const f = cli / nat / k();
+    pushObj({
+      uid: uidSeq++, kind: 'textedit', page,
+      x0: b.x0 * f, y0: b.y0 * f, x1: b.x1 * f, y1: b.y1 * f,
+      text: textDraft, spanId: pendingTextEdit.id,
+    });
+    setPendingTextEdit(null);
+    setTextDraft('');
+  };
+
+  const spanToPx = (s: TextSpan) => {
+    const im = overlayRef.current?.querySelector('img');
+    const nat = (im as HTMLImageElement)?.naturalWidth || 1;
+    const cli = overlayRef.current?.clientWidth || 1;
+    const f = cli / nat / k();
+    return { x0: s.bbox.x0 * f, y0: s.bbox.y0 * f, x1: s.bbox.x1 * f, y1: s.bbox.y1 * f };
+  };
+
   const confirmPlace = () => {
     if (!pendingPlace || !textDraft.trim()) { setPendingPlace(null); return; }
     pushObj({
@@ -243,7 +318,10 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
 
   const save = async () => {
     if (!pdfPath) { addLog('Open a PDF first.', 'error'); return; }
-    const edits = objects.map((o) => {
+    const textEdits = objects
+      .filter((o) => o.kind === 'textedit')
+      .map((o) => ({ page: o.page, span_id: o.spanId, new_text: o.text }));
+    const edits = objects.filter((o) => o.kind !== 'textedit').map((o) => {
       const [ax0, ay0] = toPts(o.x0, o.y0);
       const [ax1, ay1] = toPts(o.x1, o.y1);
       const e: any = {
@@ -259,10 +337,15 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
       if (['highlight', 'underline', 'strike'].includes(o.kind)) e.rects = [[e.x0, e.y0, e.x1, e.y1]];
       return e;
     });
-    const res = await runBackend('apply', { pdf: pdfPath, edits, page_ops: pageOps });
+    const res = await runBackend('apply', { pdf: pdfPath, edits, page_ops: pageOps, text_edits: textEdits });
     if (res) {
       setOutFiles(res.outputs || []);
-      addLog(`Saved (${edits.length} edit(s), ${pageOps.length} page op(s)). Original preserved.`, 'success');
+      addLog(`Saved (${edits.length} overlay(s), ${textEdits.length} text replacement(s), ${pageOps.length} page op(s)). Original preserved.`, 'success');
+      const applied = res.info?.text_edits_applied || [];
+      applied.forEach((t: any) => {
+        (t.warnings || []).forEach((w: string) => addLog(`Text edit p${t.page}: ${w}`, 'info'));
+        if (t.method && t.method !== 'standard') addLog(`Text edit p${t.page}: rendered with ${t.method} font.`, 'info');
+      });
     }
   };
 
@@ -275,7 +358,7 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
       <div className="liquid-glass rounded-[1.5rem] p-5 border border-white/5 flex flex-wrap items-center gap-3">
         <div>
           <h2 className="text-xl font-bold">PDF Editor</h2>
-          <p className="text-white/40 text-xs">Annotate pages and manage them. Vector content is preserved; the original file is never overwritten.</p>
+          <p className="text-white/40 text-xs">Annotate pages, truly replace existing text (edittext tool), and manage pages. Vector content is preserved; the original file is never overwritten.</p>
         </div>
         <div className="flex-1" />
         <button onClick={pickPdf} className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase tracking-widest">Open PDF</button>
@@ -323,6 +406,13 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
               style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}>
               <img key={imgKey} src={img} alt="page" className="w-full block pointer-events-none" draggable={false} />
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
+                {tool === 'edittext' && spans.map((s) => {
+                  const r = spanToPx(s);
+                  return (
+                    <rect key={`span-${s.id}`} x={r.x0} y={r.y0} width={Math.max(r.x1 - r.x0, 2)} height={Math.max(r.y1 - r.y0, 2)}
+                      fill="rgba(16,185,129,0.18)" stroke="#10b981" strokeWidth={1.5} />
+                  );
+                })}
                 {cur.map((o) => (
                   <g key={o.uid} opacity={0.9}>
                     {['rect', 'text', 'image', 'note'].includes(o.kind) && (
@@ -365,6 +455,22 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
               <button onClick={() => setPendingPlace(null)} className="px-4 py-2 rounded-lg bg-white/5 text-[0.625em] font-bold uppercase">Cancel</button>
             </div>
           )}
+          {pendingTextEdit && (
+            <div className="mt-2 flex flex-col gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+              <p className="text-[0.625em] text-white/50">
+                Replace <span className="text-white/80 font-mono">“{pendingTextEdit.text}”</span>
+                <span className="text-white/30"> ({pendingTextEdit.font}, {pendingTextEdit.size}pt)</span>
+              </p>
+              <div className="flex gap-2">
+                <input value={textDraft} onChange={(e) => setTextDraft(e.target.value)}
+                  placeholder="Replacement text (single line, must fit)"
+                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white/80" autoFocus />
+                <button onClick={confirmTextEdit} className="px-4 py-2 rounded-lg bg-emerald-600 text-[0.625em] font-bold uppercase">Replace</button>
+                <button onClick={() => setPendingTextEdit(null)} className="px-4 py-2 rounded-lg bg-white/5 text-[0.625em] font-bold uppercase">Cancel</button>
+              </div>
+              <p className="text-[0.5625em] text-white/30">True replacement: old glyphs are removed and the new text uses the original font when reusable. Scanned pages have no selectable text.</p>
+            </div>
+          )}
         </div>
 
         <div className="lg:col-span-3 flex flex-col gap-4">
@@ -386,7 +492,7 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
             <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
               {objects.map((o) => (
                 <div key={o.uid} className="flex items-center gap-2 text-[0.6875em] text-white/70 bg-black/20 rounded-lg px-2 py-1">
-                  <span className="flex-1 truncate">p{o.page} · {o.kind}{o.text ? ` · ${o.text.slice(0, 18)}` : ''}</span>
+                  <span className="flex-1 truncate">p{o.page} · {o.kind === 'textedit' ? `replace #${o.spanId}` : o.kind}{o.text ? ` · ${o.text.slice(0, 18)}` : ''}</span>
                   <button onClick={() => setObjects((os) => os.filter((x) => x.uid !== o.uid))} className="text-white/30 hover:text-red-300">✕</button>
                 </div>
               ))}

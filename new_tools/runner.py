@@ -73,6 +73,13 @@ def main(argv):
         result.setdefault("success", True)
         result.setdefault("outputs", [])
         result.setdefault("info", {})
+        if result.get("success"):
+            from _common import verify_result_outputs
+            ok, problem = verify_result_outputs(result)
+            if not ok:
+                log(f"Output validation failed for '{tool}:{operation}': {problem}")
+                result = {"success": False, "error": problem,
+                          "outputs": [], "info": result.get("info", {})}
         progress(100)
         log(f"Finished '{tool}:{operation}'")
         emit_result(result)
