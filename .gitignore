@@ -31,12 +31,14 @@ TestOutput/
 **/test*.js
 **/test*.py
 
+*fix.md
+*task.md
+
 # Build, distribution, and local artifacts
 build/
 backend-dist/
 python/build/
 python/venv_build/
-dist/
 output_cli_test.pdf
 dummy*.pdf
 test_image.jpg
