@@ -51,33 +51,57 @@ def _is_executable(path):
     return bool(path) and os.path.isfile(path) and os.access(path, os.X_OK)
 
 
-def _resolve_tesseract(explicit=None):
-    """Return (binary_path_or_None, source) with source in
-    {'bundled', 'env', 'path', 'none'}."""
-    if explicit and _is_executable(explicit):
-        return explicit, "bundled"
+def _repo_vendored_paths():
+    """Dev-tree self-discovery: <repo>/thirdparty/tesseract next to new_tools.
+    Frozen bundles resolve to a temp dir without it, so this safely yields
+    nothing when packaged (where main.js injects the real paths instead)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    base = os.path.normpath(os.path.join(here, "..", "thirdparty", "tesseract"))
+    exe = "tesseract.exe" if os.name == "nt" else "tesseract"
+    return os.path.join(base, "bin", exe), os.path.join(base, "tessdata")
+
+
+def _resolve_engine(explicit_bin=None, explicit_data=None):
+    """Resolve (binary, tessdata_dir, source) with correct pairing.
+
+    source in {'bundled', 'env', 'path', 'none'}. The repo-vendored tessdata
+    is ONLY paired with the repo-vendored binary (traineddata formats must
+    match the engine); every other binary uses explicit/env data or its own
+    defaults.
+    """
+    exp_data = explicit_data if explicit_data and os.path.isdir(explicit_data) else ""
+    env_data = os.environ.get("TESSDATA_PREFIX", "")
+    env_data = env_data if env_data and os.path.isdir(env_data) else ""
+    if explicit_bin and _is_executable(explicit_bin):
+        return explicit_bin, exp_data or env_data, "bundled"
     env_bin = os.environ.get("INFINITYPDF_TESSERACT", "")
     if env_bin and _is_executable(env_bin):
-        return env_bin, "env"
+        return env_bin, exp_data or env_data, "env"
+    repo_bin, repo_data = _repo_vendored_paths()
+    if _is_executable(repo_bin):
+        return repo_bin, exp_data or (repo_data if os.path.isdir(repo_data) else ""), "bundled"
     path_bin = shutil.which("tesseract")
     if path_bin:
-        return path_bin, "path"
-    return None, "none"
+        return path_bin, exp_data or env_data, "path"
+    return None, "", "none"
+
+
+def _resolve_tesseract(explicit=None):
+    """Return (binary_path_or_None, source). Tessdata resolved separately."""
+    binary, _data, source = _resolve_engine(explicit, None)
+    return binary, source
 
 
 def _resolve_tessdata(explicit=None):
-    if explicit and os.path.isdir(explicit):
-        return explicit
-    env_dir = os.environ.get("TESSDATA_PREFIX", "")
-    if env_dir and os.path.isdir(env_dir):
-        return env_dir
-    return ""
+    _binary, data, _source = _resolve_engine(None, explicit)
+    return data
 
 
 def _detect_engines(explicit_bin=None, explicit_data=None):
     """Detect optional OCR engines. Never raises for missing pieces."""
-    tesseract_bin, tess_source = _resolve_tesseract(explicit_bin)
-    tessdata_dir = _resolve_tessdata(explicit_data) if tesseract_bin else ""
+    tesseract_bin, tessdata_dir, tess_source = _resolve_engine(explicit_bin, explicit_data)
+    if not tesseract_bin:
+        tessdata_dir = ""
     ocrmypdf_bin = shutil.which("ocrmypdf")
     try:
         import pytesseract  # noqa: F401
@@ -89,9 +113,13 @@ def _detect_engines(explicit_bin=None, explicit_data=None):
     languages = []
     if tesseract_bin:
         try:
+            lang_env = dict(os.environ)
+            if tessdata_dir:
+                lang_env["TESSDATA_PREFIX"] = tessdata_dir
             proc = subprocess.run(
                 [tesseract_bin, "--list-langs"],
                 capture_output=True, text=True, timeout=20,
+                env=lang_env,
             )
             out = (proc.stdout or "") + "\n" + (proc.stderr or "")
             for line in out.splitlines():
@@ -168,16 +196,20 @@ def _tesseract_env(tessdata_dir):
     return env
 
 
-def _run_tesseract_cli(tesseract_bin, tessdata_dir, src_pdf, dst_base, lang_str,
+def _run_tesseract_cli(tesseract_bin, tessdata_dir, src_img, dst_base, lang_str,
                        mode, workdir):
     """Direct Tesseract CLI pipeline (no ocrmypdf, no pytesseract needed).
 
-    searchable: `tesseract in.pdf outbase -l langs pdf` (text layer over the
-    original pages, appearance preserved byte-for-byte where possible).
-    txt:        `tesseract in.pdf outbase -l langs txt`.
+    Output format is selected with `-c` variables rather than trailing config
+    names, so no extra config files must exist in tessdata: searchable PDFs
+    via `-c tessedit_create_pdf=1`, plain text is the default output.
+    `src_img` is a rendered page image (this engine build cannot read PDFs
+    directly, and per-image calls give progress + cancellation).
     """
     out_ext = "pdf" if mode == "searchable" else "txt"
-    cmd = [tesseract_bin, src_pdf, dst_base, "-l", lang_str or "eng", out_ext]
+    cmd = [tesseract_bin, src_img, dst_base, "-l", lang_str or "eng"]
+    if mode == "searchable":
+        cmd += ["-c", "tessedit_create_pdf=1"]
     log(f"running tesseract CLI ({os.path.basename(tesseract_bin)} ... -l {lang_str} {out_ext})")
     try:
         proc = subprocess.run(
@@ -352,32 +384,62 @@ def op_ocr(args, outdir):
 
         if engine == "tesseract-cli":
             import fitz as _fitz
-            if len(idxs) == total:
-                src_for_ocr = pdf
-            else:
-                src_for_ocr = os.path.join(workdir, "subset.pdf")
-                s = _fitz.open(pdf)
-                try:
-                    sub = _fitz.open()
-                    try:
-                        for pi in idxs:
-                            check_cancel()
-                            sub.insert_pdf(s, from_page=pi, to_page=pi)
-                        sub.save(src_for_ocr)
-                    finally:
-                        sub.close()
-                finally:
-                    s.close()
-            dst_base = unique_path(outdir, "ocr_searchable" if mode == "searchable" else "ocr",
-                                   "pdf" if mode == "searchable" else "txt")
-            if dst_base.lower().endswith((".pdf", ".txt")):
-                dst_base = dst_base[:dst_base.rfind(".")]
-            progress(15)
+            # NOTE: some Tesseract builds (incl. the vendored 5.4.x) cannot
+            # read PDFs directly ("Pdf reading is not supported"), so pages
+            # are always rendered to PNG first. This also gives per-page
+            # progress and cancellation between pages.
+            src = _fitz.open(pdf)
+            try:
+                pngs = []
+                for k, pi in enumerate(idxs):
+                    check_cancel()
+                    pix = src[pi].get_pixmap(dpi=300)
+                    p = os.path.join(workdir, f"ocr_p{pi + 1}.png")
+                    pix.save(p)
+                    pngs.append((pi + 1, p))
+                    progress(15 + int(((k + 1) / max(len(idxs), 1)) * 20))
+            finally:
+                src.close()
             check_cancel()
-            out_file = _run_tesseract_cli(tess_bin, tess_data, src_for_ocr,
-                                          dst_base, lang_str, mode, workdir)
+            if mode == "txt":
+                chunks = []
+                for k, (pno, png) in enumerate(pngs):
+                    check_cancel()
+                    base = os.path.join(workdir, f"ocr_p{pno}")
+                    _run_tesseract_cli(tess_bin, tess_data, png, base,
+                                       lang_str, "txt", workdir)
+                    with open(base + ".txt", encoding="utf-8", errors="replace") as f:
+                        chunks.append(f"--- page {pno} ---\n{f.read()}")
+                    progress(35 + int(((k + 1) / max(len(pngs), 1)) * 60))
+                out_txt = unique_path(outdir, "ocr", "txt")
+                with open(out_txt, "w", encoding="utf-8") as f:
+                    f.write("\n\f\n".join(chunks) + "\n")
+                progress(100)
+                return {"outputs": [out_txt], "info": {
+                    "engine": "tesseract-cli", "mode": mode, "langs": langs,
+                    "pages": [i + 1 for i in idxs],
+                    "bundled": st.get("bundled", False),
+                }}
+            # searchable: per-page OCR PDFs merged in order
+            parts = []
+            for k, (pno, png) in enumerate(pngs):
+                check_cancel()
+                base = os.path.join(workdir, f"ocr_p{pno}")
+                parts.append(_run_tesseract_cli(tess_bin, tess_data, png, base,
+                                                lang_str, "searchable", workdir))
+                progress(35 + int(((k + 1) / max(len(pngs), 1)) * 55))
+            merged = _fitz.open()
+            try:
+                for part in parts:
+                    check_cancel()
+                    with _fitz.open(part) as one:
+                        merged.insert_pdf(one)
+                final_pdf = unique_path(outdir, "ocr_searchable", "pdf")
+                merged.save(final_pdf, garbage=3, deflate=True)
+            finally:
+                merged.close()
             progress(100)
-            return {"outputs": [out_file], "info": {
+            return {"outputs": [final_pdf], "info": {
                 "engine": "tesseract-cli", "mode": mode, "langs": langs,
                 "pages": [i + 1 for i in idxs],
                 "bundled": st.get("bundled", False),

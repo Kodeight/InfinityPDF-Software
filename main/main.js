@@ -871,7 +871,7 @@ function isPathUnderDir(filePath, dir) {
   }
 }
 
-function isPreviewAllowed(filePath) {
+function isKnownOutputFile(filePath) {
   const os = require("os");
   if (isPathUnderDir(filePath, os.tmpdir())) return true;
   for (const dir of knownOutputDirs) {
@@ -901,7 +901,7 @@ ipcMain.handle("get-file-data", async (event, { filePath }) => {
     if (!mime) {
       return { success: false, error: "Preview supports image files only" };
     }
-    if (!isPreviewAllowed(filePath)) {
+    if (!isKnownOutputFile(filePath)) {
       return { success: false, error: "Preview is limited to application output files" };
     }
     let stat = null;
@@ -949,6 +949,15 @@ ipcMain.handle("export-files", async (event, { sourcePaths, targetDir }) => {
       // Only regular files are exported; directories/special files are out
       // of scope for this helper and must not be copied recursively.
       if (!stat || !stat.isFile()) {
+        skipped.push(src);
+        continue;
+      }
+      // Sources are restricted to files the application itself produced
+      // (session output dirs) or the OS temp tree, so the renderer cannot
+      // use this bridge as an arbitrary-file copy primitive. Every current
+      // export workflow (universal/security/new-tools outputs) satisfies
+      // this; anything else is reported in `skipped`, never copied.
+      if (!isKnownOutputFile(src)) {
         skipped.push(src);
         continue;
       }

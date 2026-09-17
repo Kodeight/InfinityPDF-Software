@@ -6,6 +6,35 @@ contains a working bundle, the app uses it automatically (dev and packaged);
 when absent, the backend falls back to `INFINITYPDF_TESSERACT` → system
 `PATH` → a clear "engine unavailable" message. Nothing crashes either way.
 
+## Current status
+
+- `tessdata/{eng,ara,fra}.traineddata` (tessdata_fast, verified magic bytes
+  + sizes) are vendored locally (gitignored, shipped when present).
+- `bin/tesseract.exe` is NOT yet vendored: the only verified Windows
+  distribution is an Inno Setup installer, and locked-down environments must
+  not execute it. See "Binary harvest" below.
+- Until the binary lands, `engines` reports `bundled:false` and `ocr`
+  degrades gracefully. The full wiring (precedence, `TESSDATA_PREFIX`,
+  subsets, packaged injection) is verified with a stub engine.
+
+## Licensing verdict (bundling is permitted)
+
+- Tesseract 5: Apache 2.0. tessdata_fast: Apache 2.0. Leptonica: BSD.
+  All permit redistribution with attribution — keep the upstream
+  `LICENSE`/`NOTICE` next to the binaries.
+- Rejected alternative: Windows built-in WinRT OCR (present on Win10+ but
+  Arabic/French depend on optional user language packs → unreliable offline;
+  plus WinRT/COM interop and no searchable-PDF pipeline). Tesseract stays.
+
+## Binary harvest (one time, staging machine)
+
+1. Run `thirdparty/fetch_ocr_engine.ps1` (downloads + hash-verifies the
+   installer; never executes it).
+2. On a staging machine, extract WITHOUT system install and copy
+   `tesseract.exe` + its DLLs into `bin/`.
+3. Confirm `tesseract.exe --list-langs` shows eng/ara/fra, then run the
+   genuine accuracy gate (English/French/Arabic scanned pages).
+
 ## Expected layout
 
 ```text

@@ -3,12 +3,72 @@ import React from 'react';
 import { ToolId } from '../types';
 import { TOOLS } from '../constants';
 import { translations, LanguageCode } from '../translations';
-import { NEW_TOOL_CATEGORIES, NEW_TOOL_DEFS } from './newtools/toolDefs';
+import { NEW_TOOL_DEFS } from './newtools/toolDefs';
 
 interface Props {
   onSelectTool: (id: ToolId) => void;
   lang: string;
 }
+
+interface CardProps {
+  id: string;
+  icon: React.ReactNode;
+  name: string;
+  desc: string;
+  kindLabel: string;
+  onSelect: (id: ToolId) => void;
+  boxClass?: string;
+}
+
+/*! @preserve InfinityPDF v1.5.0 TOOL CARD HOVER IMPLEMENTATION — Dashboard ToolCard */
+// One stable card geometry for Core Tools and More Tools.
+//
+// IMPORTANT: the icon slot NEVER changes size or participates in layout
+// reflow during hover. The icon itself is the only element being scaled.
+// The description is absolutely positioned inside the fixed card, so its
+// appearance can never push/re-center the icon, title, or More Tools section.
+// This prevents the previous "center first, then jump upward" animation.
+const ToolCard: React.FC<CardProps> = ({ id, icon, name, desc, kindLabel, onSelect, boxClass }) => (
+  <button
+    role="listitem"
+    aria-label={`${name}: ${desc}`}
+    className="group relative rounded-[2rem] transition-all shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60"
+    onClick={() => onSelect(id as ToolId)}
+  >
+    <div className={`tool-btn ${boxClass || 'w-64 h-64'} liquid-glass rounded-3xl overflow-hidden flex flex-col items-center justify-center gap-5 cursor-pointer p-6 relative`}>
+      {/* Fixed icon slot: its geometry never changes on hover.
+          Only the inner icon scales/lifts around its exact center.
+          This eliminates flex reflow and the late upward jump. */}
+      <div className="w-20 h-20 shrink-0 rounded-2xl bg-white/5 group-hover:bg-blue-500/10 flex items-center justify-center">
+        <span className="flex items-center justify-center shrink-0 origin-center motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out group-hover:scale-[0.6] group-focus-visible:scale-[0.6] group-active:scale-[0.6] group-hover:-translate-y-1 group-focus-visible:-translate-y-1 group-active:-translate-y-1">
+          {icon}
+        </span>
+      </div>
+
+      {/* Fixed-flow title block. Description is NOT part of this flow. */}
+      <div className="text-center min-w-0 w-full shrink-0">
+        <h3 className="text-lg font-semibold mb-1 motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out group-hover:-translate-y-1 group-focus-visible:-translate-y-1 group-active:-translate-y-1">
+          {name}
+        </h3>
+        <span className="block text-white/20 text-xs uppercase tracking-widest font-bold motion-safe:transition-opacity motion-safe:duration-200 group-hover:opacity-0 group-focus-visible:opacity-0 group-active:opacity-0">
+          {kindLabel}
+        </span>
+      </div>
+
+      {/* Description is absolutely positioned INSIDE the card.
+          It cannot change card height or re-center the flex column.
+          Its animation is only opacity/transform. */}
+      <div
+        className="absolute left-6 right-6 bottom-6 max-h-14 overflow-hidden pointer-events-none text-center opacity-0 translate-y-2 motion-safe:transition-all motion-safe:duration-200 motion-safe:ease-out group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100 group-active:translate-y-0 group-active:opacity-100"
+        aria-hidden="true"
+      >
+        <p className="text-white/60 text-[11px] leading-snug">
+          {desc}
+        </p>
+      </div>
+    </div>
+  </button>
+);
 
 const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
   const t = (key: string) => translations[key]?.[lang as LanguageCode] || key;
@@ -16,7 +76,6 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
   // Existing tools keep their exact rendering; new tools read name/desc
   // from their own definitions (translations file stays frozen).
   const legacyName = (id: string) => t(id === 'multi_pdf' ? 'multi_pdf' : id === 'permissions' ? 'pdf_security' : 'universal_converter');
-  const legacyDesc = (id: string) => t(id === 'multi_pdf' ? 'multi_pdf_desc' : id === 'permissions' ? 'security_desc' : 'universal_desc');
   const existing = TOOLS.filter((tool) => !tool.hideFromNav);
 
   return (
@@ -33,60 +92,35 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
 
       <div className="flex gap-8 items-center justify-center" role="list">
         {existing.map((tool) => (
-          <button
+          <ToolCard
             key={tool.id}
-            role="listitem"
-            aria-label={`${legacyName(tool.id)}: ${legacyDesc(tool.id)}`}
-            className="group relative rounded-[2rem] transition-all"
-            onClick={() => onSelectTool(tool.id)}
-          >
-            <div className="tool-btn w-64 h-64 liquid-glass rounded-3xl flex flex-col items-center justify-center gap-6 cursor-pointer p-6">
-              {/* Clean icon container with no extra shadows */}
-              <div className="p-4 rounded-2xl bg-white/5 group-hover:bg-blue-500/10 transition-colors">
-                {tool.icon}
-              </div>
-              <div className="text-center">
-                <h3 className="text-lg font-semibold mb-1">{legacyName(tool.id)}</h3>
-                <span className="text-white/20 text-xs uppercase tracking-widest font-bold">{t('tool_label')}</span>
-              </div>
-            </div>
-
-            {/* Tooltip Description */}
-            <div
-              className="absolute top-full mt-4 left-0 w-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none text-center"
-              aria-hidden="true"
-            >
-               <p className="text-white/60 text-sm leading-relaxed px-4">
-                  {legacyDesc(tool.id)}
-               </p>
-            </div>
-          </button>
+            id={tool.id}
+            icon={tool.icon}
+            name={legacyName(tool.id)}
+            desc={t(tool.id === 'multi_pdf' ? 'multi_pdf_card_desc' : tool.id === 'permissions' ? 'pdf_security_card_desc' : 'universal_card_desc')}
+            kindLabel={t('tool_label')}
+            onSelect={onSelectTool}
+          />
         ))}
       </div>
 
-      {/* Additive expansion: categorized grid of new tools, appended below. */}
-      <div className="w-full max-w-6xl mx-auto mt-14 pb-16">
+      {/* All 25 new tools, same card style, 5 per row under the core tools. */}
+      <div className="w-full max-w-7xl mx-auto mt-14 pb-16">
         <h2 className="text-center text-[0.625em] font-bold uppercase tracking-[0.35em] text-white/30 mb-6">More Tools</h2>
-        {NEW_TOOL_CATEGORIES.map((cat) => (
-          <div key={cat} className="mb-6">
-            <h3 className="text-sm font-bold text-white/60 mb-3 px-2">{cat}</h3>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {NEW_TOOL_DEFS.filter((d) => d.category === cat).map((d) => (
-                <button
-                  key={d.id}
-                  onClick={() => onSelectTool(d.id as ToolId)}
-                  className="group liquid-glass rounded-2xl p-4 border border-white/5 text-left hover:border-blue-500/30 transition-all"
-                >
-                  <div className="flex items-center gap-3 mb-1">
-                    <div className="w-8 h-8 shrink-0 [&>svg]:w-8 [&>svg]:h-8 text-white/70">{d.icon}</div>
-                    <span className="text-sm font-bold text-white/90">{d.title}</span>
-                  </div>
-                  <p className="text-[0.6875em] text-white/35 leading-snug">{d.desc}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 items-start justify-center" role="list">
+          {NEW_TOOL_DEFS.map((d) => (
+            <ToolCard
+              key={d.id}
+              id={d.id}
+              icon={d.icon}
+              name={d.title}
+              desc={d.desc}
+              kindLabel={t('tool_label')}
+              onSelect={onSelectTool}
+              boxClass="w-full h-64"
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

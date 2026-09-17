@@ -12,14 +12,39 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
+  // Startup loader gates: the full-screen loader lifts only when BOTH the
+  // minimum visible duration (3s) has elapsed AND the app is really ready
+  // (React mounted + document loaded + a painted frame). Duration is
+  // MAX(3s, actual load time) — never a bare 3s timeout.
+  const [minElapsed, setMinElapsed] = useState(false);
+  const [appReady, setAppReady] = useState(false);
+
   useEffect(() => {
-    // Initial boot sequence
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-      setIsInitialLoad(false);
-    }, 1500);
+    const timer = setTimeout(() => setMinElapsed(true), 3000);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    let live = true;
+    const markReady = () => { if (live) setAppReady(true); };
+    const afterPaint = () => requestAnimationFrame(() => requestAnimationFrame(markReady));
+    if (document.readyState === 'complete') {
+      afterPaint();
+    } else {
+      window.addEventListener('load', afterPaint, { once: true });
+    }
+    return () => {
+      live = false;
+      window.removeEventListener('load', afterPaint);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (minElapsed && appReady) {
+      setIsLoading(false);
+      setIsInitialLoad(false);
+    }
+  }, [minElapsed, appReady]);
 
   useEffect(() => {
     // Force LTR layout for all languages as per user request

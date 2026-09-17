@@ -74,33 +74,33 @@ export const translations: Translations = {
     ar: "أداة",
   },
 
-  // Tool Descriptions
-  multi_pdf_desc: {
-    en: "Personalize PPTX or PDF documents with batch watermarking and security.",
-    fr: "Personnalisez des documents PPTX ou PDF avec un filigrane et une sécurité par lots.",
-    de: "Personalisieren Sie PPTX- oder PDF-Dokumente mit Batch-Wasserzeichen und Sicherheit.",
-    es: "Personalice documentos PPTX o PDF con marcas de agua y seguridad por lotes.",
-    it: "Personalizza documenti PPTX o PDF con filigrana e sicurezza batch.",
-    pt: "Personalize documentos PPTX ou PDF com marca d'água e segurança em lote.",
-    ar: "قم بتخصيص مستندات PPTX أو PDF من خلال العلامة المائية والأمان المجمع.",
+  // Core Tool card descriptions (short, shown inside the fixed-size cards).
+  multi_pdf_card_desc: {
+    en: "Combine, split, reorder, and manage multiple PDF files in one workflow.",
+    fr: "Combinez, divisez, réorganisez et gérez plusieurs fichiers PDF en un seul flux.",
+    de: "Mehrere PDF-Dateien in einem Arbeitsablauf zusammenführen, teilen, neu anordnen und verwalten.",
+    es: "Combine, divida, reordene y gestione varios archivos PDF en un solo flujo.",
+    it: "Unisci, dividi, riordina e gestisci più file PDF in un unico flusso.",
+    pt: "Combine, divida, reordene e gerencie vários arquivos PDF em um só fluxo.",
+    ar: "ادمج ملفات PDF المتعددة وقسّمها وأعد ترتيبها وأدرها في سير عمل واحد.",
   },
-  security_desc: {
-    en: "Secure your PDF files by managing printing, copying, and editing restrictions.",
-    fr: "Sécurisez vos fichiers PDF en gérant les restrictions d'impression, de copie et d'édition.",
-    de: "Sichern Sie Ihre PDF-Dateien durch Verwalten von Druck-, Kopier- und Bearbeitungsbeschränkungen.",
-    es: "Proteja sus archivos PDF administrando las restricciones de impresión, copia y edición.",
-    it: "Proteggi i tuoi file PDF gestendo le restrizioni di stampa, copia e modifica.",
-    pt: "Proteja seus arquivos PDF gerenciando restrições de impressão, cópia e edição.",
-    ar: "قم بتأمين ملفات PDF الخاصة بك عن طريق إدارة قيود الطباعة والنسخ والتحرير.",
+  pdf_security_card_desc: {
+    en: "Protect your PDF files with passwords, permissions, and document restrictions.",
+    fr: "Protégez vos fichiers PDF avec des mots de passe, des autorisations et des restrictions.",
+    de: "Schützen Sie Ihre PDF-Dateien mit Passwörtern, Berechtigungen und Dokumenteinschränkungen.",
+    es: "Proteja sus archivos PDF con contraseñas, permisos y restricciones de documento.",
+    it: "Proteggi i tuoi file PDF con password, autorizzazioni e restrizioni.",
+    pt: "Proteja seus arquivos PDF com senhas, permissões e restrições de documento.",
+    ar: "احمِ ملفات PDF بكلمات مرور وأذونات وقيود على المستندات.",
   },
-  universal_desc: {
-    en: "Multi-format support for Word, Excel, and various image formats to PDF transformation.",
-    fr: "Prise en charge multi-format pour la transformation de Word, Excel et divers formats d'image en PDF.",
-    de: "Multi-Format-Unterstützung für die Umwandlung von Word, Excel und verschiedenen Bildformaten in PDF.",
-    es: "Soporte multiformato para la transformación de Word, Excel y varios formatos de imagen a PDF.",
-    it: "Supporto multiformato per la trasformazione di Word, Excel e vari formati di immagine in PDF.",
-    pt: "Suporte multiformato para transformação de Word, Excel e vários formatos de imagem para PDF.",
-    ar: "دعم تنسيقات متعددة لتحويل Word و Excel وتنسيقات الصور المختلفة إلى PDF.",
+  universal_card_desc: {
+    en: "Convert documents and images between popular file formats with ease.",
+    fr: "Convertissez documents et images entre les formats populaires en toute simplicité.",
+    de: "Dokumente und Bilder ganz einfach zwischen gängigen Dateiformaten konvertieren.",
+    es: "Convierta documentos e imágenes entre formatos populares con facilidad.",
+    it: "Converti documenti e immagini tra i formati più diffusi con facilità.",
+    pt: "Converta documentos e imagens entre formatos populares com facilidade.",
+    ar: "حوّل المستندات والصور بين تنسيقات الملفات الشائعة بسهولة.",
   },
 
   // Panels Common
