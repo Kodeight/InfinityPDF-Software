@@ -50,6 +50,7 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
   const [dpi, setDpi] = useState(150);
   const [img, setImg] = useState('');
   const [imgKey, setImgKey] = useState(0);
+  const [rendering, setRendering] = useState(false);
   const [pageSize, setPageSize] = useState({ w: 612, h: 792 });
   const [tool, setTool] = useState('select');
   const [objects, setObjects] = useState<EditObj[]>([]);
@@ -115,6 +116,8 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
       setPdfPath(p);
       setPdfName(f.name);
       setPage(1);
+      setImg('');
+      setRendering(true);
       setObjects([]);
       setPageOps([]);
       setOutFiles([]);
@@ -132,8 +135,10 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
   const renderPage = useCallback(async (pg: number, d: number) => {
     if (!pdfPath) return;
     const seq = ++renderSeq.current;
+    setRendering(true);
     const res = await runBackend('render', { pdf: pdfPath, page: pg, dpi: d }, true);
     if (renderSeq.current !== seq) return; // a newer render was requested
+    setRendering(false);
     if (res?.outputs?.[0]) {
       setImg(await previewSrc(res.outputs[0]));
       setImgKey((k) => k + 1);
@@ -308,8 +313,13 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
     inp.type = 'file';
     inp.accept = '.png,.jpg,.jpeg';
     inp.onchange = () => {
-      const p = (inp.files?.[0] as any)?.path;
-      if (p) { setImgPick(p); addLog('Image ready — click on the page to place it.', 'info'); }
+      const f = inp.files?.[0];
+      if (!f) return; // dialog cancelled — stay silent
+      const p = (f as any)?.path;
+      if (!p) { addLog(`Could not use ${f.name}: file path is not available in this view.`, 'error'); return; }
+      setImgPick(p);
+      setTool('image'); // arm the image tool so the next page click places it
+      addLog(`Image ready — click on the page to place ${f.name}.`, 'success');
     };
     inp.click();
   };
@@ -322,6 +332,8 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
 
   const save = async () => {
     if (!pdfPath) { addLog('Open a PDF first.', 'error'); return; }
+    const missingImg = objects.find((o) => o.kind === 'image' && !o.imagePath);
+    if (missingImg) { addLog('An image object lost its file reference — remove it and place the image again.', 'error'); return; }
     const textEdits = objects
       .filter((o) => o.kind === 'textedit')
       .map((o) => ({ page: o.page, span_id: o.spanId, new_text: o.text }));
@@ -390,6 +402,12 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
         <button onClick={undo} className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase">Undo</button>
         <button onClick={redo} className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase">Redo</button>
         <button onClick={uploadImage} className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase">Upload image</button>
+        {imgPick && (
+          <span className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-violet-600/20 border border-violet-500/40 text-[0.625em] font-bold uppercase text-violet-200">
+            <span className="truncate max-w-40">IMG: {imgPick.split(/[/\\]/).pop()} — click page to place</span>
+            <button onClick={() => setImgPick('')} className="text-violet-300 hover:text-red-300" aria-label="Remove image">✕</button>
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -408,7 +426,13 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
             <div ref={overlayRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
               className="relative rounded-xl overflow-hidden border border-white/10 touch-none select-none"
               style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}>
-              <img key={imgKey} src={img} alt="page" className="w-full block pointer-events-none" draggable={false} />
+              <img key={imgKey} src={img} alt="page" className={`w-full block pointer-events-none ${rendering ? 'opacity-40' : ''}`} draggable={false} />
+              {rendering && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/30">
+                  <div className="w-10 h-10 rounded-full border-[3px] border-white/20 border-t-blue-400 animate-spin" />
+                  <span className="text-[0.625em] font-bold uppercase tracking-[0.25em] text-white/70">Loading PDF…</span>
+                </div>
+              )}
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
                 {tool === 'edittext' && spans.map((s) => {
                   const r = spanToPx(s);
@@ -420,8 +444,16 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
                 {cur.map((o) => (
                   <g key={o.uid} opacity={0.9}>
                     {['rect', 'text', 'image', 'note'].includes(o.kind) && (
-                      <rect x={Math.min(o.x0, o.x1)} y={Math.min(o.y0, o.y1)} width={Math.abs(o.x1 - o.x0)} height={Math.abs(o.y1 - o.y0)}
-                        fill={o.kind === 'rect' ? 'transparent' : 'rgba(255,255,150,0.35)'} stroke={o.color || '#3b82f6'} strokeWidth={2} />
+                      <g>
+                        <rect x={Math.min(o.x0, o.x1)} y={Math.min(o.y0, o.y1)} width={Math.abs(o.x1 - o.x0)} height={Math.abs(o.y1 - o.y0)}
+                          fill={o.kind === 'rect' ? 'transparent' : 'rgba(255,255,150,0.35)'} stroke={o.kind === 'image' ? '#a78bfa' : (o.color || '#3b82f6')} strokeWidth={2}
+                          strokeDasharray={o.kind === 'image' ? '6 3' : undefined} />
+                        {o.kind === 'image' && (
+                          <text x={Math.min(o.x0, o.x1) + 4} y={Math.min(o.y0, o.y1) + 14} fontSize={11} fontWeight="bold" fill="#a78bfa">
+                            IMG{(o.imageName ? ` · ${o.imageName.slice(0, 20)}` : '')}
+                          </text>
+                        )}
+                      </g>
                     )}
                     {['line', 'arrow'].includes(o.kind) && (
                       <line x1={o.x0} y1={o.y0} x2={o.x1} y2={o.y1} stroke={o.color || '#111'} strokeWidth={3} markerEnd={o.kind === 'arrow' ? 'url(#ah)' : undefined} />
@@ -449,7 +481,16 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
               </svg>
             </div>
           ) : (
-            <div className="rounded-xl border border-dashed border-white/10 py-16 text-center text-[0.625em] text-white/25 uppercase tracking-widest">Open a PDF to start editing</div>
+            <div className="rounded-xl border border-dashed border-white/10 py-16 flex flex-col items-center justify-center gap-3 text-[0.625em] text-white/25 uppercase tracking-widest">
+              {rendering ? (
+                <>
+                  <div className="w-10 h-10 rounded-full border-[3px] border-white/20 border-t-blue-400 animate-spin" />
+                  <span>Loading PDF…</span>
+                </>
+              ) : (
+                <span>Open a PDF to start editing</span>
+              )}
+            </div>
           )}
           {pendingPlace && (
             <div className="mt-2 flex gap-2">
