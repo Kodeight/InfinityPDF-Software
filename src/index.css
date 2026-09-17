@@ -55,3 +55,41 @@ button > svg {
   justify-content: center;
   line-height: 1;
 }
+
+/* ------------------------------------------------------------------
+ * Shared optical correction for ALL-CAPS button labels (measured fix).
+ *
+ * Measurement (production UI, canvas font metrics on Josefin Sans Bold):
+ * all-caps ink sits ~0.16em above the line-box center because capital
+ * letters have no descenders while the line box reserves descender space
+ * below the baseline. Flex centering centers the line box, so caps render
+ * ~0.08em (≈1px at 12px) too high — "less padding above than below".
+ * Verified via Range rects + canvas actualBoundingBox on REPLACE ALL,
+ * SAVE, UNDO, OUTPUT FOLDER and nav/card labels (all showed the same
+ * upward bias; mixed-case labels with descenders do not).
+ *
+ * Fix: shift 0.08em of vertical padding from bottom to top. Total button
+ * height is bit-for-bit preserved; the value is em-relative so it scales
+ * with every button font size automatically.
+ *
+ * Scope (deliberate, not random):
+ * - only `button.uppercase` (all-caps labels; mixed-case titles, nav tabs
+ *   without the class, and icon-only buttons without text are untouched),
+ * - only Latin-script locales (Arabic has deep descenders and needs no
+ *   correction; `uppercase` is a no-op for it),
+ * - one rule per Tailwind py-* step present in the codebase, matched with
+ *   the exact-token selector `[class~="py-X"]` (a substring selector would
+ *   collide, e.g. py-2 vs py-2.5),
+ * - future py-* steps gracefully keep the old (uncorrected) rendering.
+ * Residual: caps labels containing J/Q keep a <=1px variance (their tails
+ * extend below the baseline); none found in current labels.
+ * ------------------------------------------------------------------ */
+html:not(:lang(ar)) button.uppercase[class~="py-0.5"] { padding-top: calc(0.125rem + 0.08em); padding-bottom: calc(0.125rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-1"] { padding-top: calc(0.25rem + 0.08em); padding-bottom: calc(0.25rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-1.5"] { padding-top: calc(0.375rem + 0.08em); padding-bottom: calc(0.375rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-2"] { padding-top: calc(0.5rem + 0.08em); padding-bottom: calc(0.5rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-2.5"] { padding-top: calc(0.625rem + 0.08em); padding-bottom: calc(0.625rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-3"] { padding-top: calc(0.75rem + 0.08em); padding-bottom: calc(0.75rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-3.5"] { padding-top: calc(0.875rem + 0.08em); padding-bottom: calc(0.875rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-4"] { padding-top: calc(1rem + 0.08em); padding-bottom: calc(1rem - 0.08em); }
+html:not(:lang(ar)) button.uppercase[class~="py-5"] { padding-top: calc(1.25rem + 0.08em); padding-bottom: calc(1.25rem - 0.08em); }
