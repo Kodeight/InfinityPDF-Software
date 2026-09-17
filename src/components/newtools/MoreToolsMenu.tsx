@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ToolId } from '../../types';
-import { NEW_TOOL_CATEGORIES, NEW_TOOL_DEFS } from './toolDefs';
+import { NEW_TOOL_CATEGORIES, NEW_TOOL_DEFS, ntTitle, ntDesc, ntCat } from './toolDefs';
 import { translations, LanguageCode } from '../../translations';
 
 interface Props {
@@ -45,15 +45,15 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
           <div className="grid grid-cols-2 gap-4">
             {NEW_TOOL_CATEGORIES.map((cat) => (
               <div key={cat}>
-                <p className="text-[0.5625em] font-bold uppercase tracking-[0.25em] text-white/30 mb-1 px-1">{cat}</p>
+                <p className="text-[0.5625em] font-bold uppercase tracking-[0.25em] text-white/30 mb-1 px-1">{ntCat(cat, lang || 'en')}</p>
                 {NEW_TOOL_DEFS.filter((d) => d.category === cat).map((d) => (
                   <button
                     key={d.id}
                     onClick={() => { setActiveTab(d.id as ToolId); setOpen(false); }}
                     className={`w-full text-left px-3 py-2 rounded-xl transition-all ${activeTab === d.id ? 'bg-blue-600/20 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
                   >
-                    <span className="text-xs font-bold block">{d.title}</span>
-                    <span className="text-[0.625em] text-white/35 block truncate">{d.desc}</span>
+                    <span className="text-xs font-bold block">{ntTitle(d.id, lang || 'en')}</span>
+                    <span className="text-[0.625em] text-white/35 block truncate">{ntDesc(d.id, lang || 'en')}</span>
                   </button>
                 ))}
               </div>

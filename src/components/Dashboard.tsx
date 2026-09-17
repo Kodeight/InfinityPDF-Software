@@ -3,7 +3,7 @@ import React from 'react';
 import { ToolId } from '../types';
 import { TOOLS } from '../constants';
 import { translations, LanguageCode } from '../translations';
-import { NEW_TOOL_DEFS } from './newtools/toolDefs';
+import { NEW_TOOL_DEFS, ntTitle, ntDesc } from './newtools/toolDefs';
 
 interface Props {
   onSelectTool: (id: ToolId) => void;
@@ -113,8 +113,8 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
               key={d.id}
               id={d.id}
               icon={d.icon}
-              name={d.title}
-              desc={d.desc}
+              name={ntTitle(d.id, lang)}
+              desc={ntDesc(d.id, lang)}
               kindLabel={t('tool_label')}
               onSelect={onSelectTool}
               boxClass="w-full h-64"

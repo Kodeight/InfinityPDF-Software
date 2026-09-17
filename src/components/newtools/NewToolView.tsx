@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ToolState } from '../../types';
 import ProgressBar from '../ProgressBar';
-import { NewToolDef, ToolParam } from './toolDefs';
+import { NewToolDef, ToolParam, ntTitle, ntDesc, ntCat } from './toolDefs';
 import { previewSrc } from './preview';
 
 interface Props {
@@ -20,7 +20,7 @@ const IMG_EXT = /\.(png|jpe?g|webp|tiff?|bmp)$/i;
 let jobSeq = 0;
 const nextJobId = () => `nt_${Date.now()}_${++jobSeq}`;
 
-const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
+const NewToolView: React.FC<Props> = ({ def, state, setState, addLog, lang }) => {
   const [filesByInput, setFilesByInput] = useState<Record<string, LoadedFile[]>>({});
   const [opName, setOpName] = useState(def.operations[0]?.name || def.autoOp || '');
   const [params, setParams] = useState<Record<string, any>>(() => {
@@ -646,9 +646,9 @@ const NewToolView: React.FC<Props> = ({ def, state, setState, addLog }) => {
   return (
     <div className="h-full max-w-6xl mx-auto flex flex-col p-4 lg:p-6 gap-4 overflow-y-auto custom-scrollbar">
       <div className="liquid-glass rounded-[1.5rem] p-6 border border-white/5">
-        <h2 className="text-xl font-bold">{def.title}</h2>
-        <p className="text-white/40 text-sm mt-1">{def.desc}</p>
-        <p className="text-[0.5625em] uppercase tracking-[0.25em] text-white/25 font-bold mt-2">{def.category}</p>
+        <h2 className="text-xl font-bold">{ntTitle(def.id, lang)}</h2>
+        <p className="text-white/40 text-sm mt-1">{ntDesc(def.id, lang)}</p>
+        <p className="text-[0.5625em] uppercase tracking-[0.25em] text-white/25 font-bold mt-2">{ntCat(def.category, lang)}</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

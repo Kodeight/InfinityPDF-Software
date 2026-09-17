@@ -39,7 +39,7 @@ const ToolView: React.FC<Props> = ({ toolId, lang }) => {
   const newDef = NEW_TOOL_MAP[toolId];
   if (newDef) {
     if (toolId === 'pdf_editor') {
-      return <PdfEditorPanel state={state} setState={setState} addLog={addLog} />;
+      return <PdfEditorPanel state={state} setState={setState} addLog={addLog} lang={lang} />;
     }
     return <NewToolView def={newDef} state={state} setState={setState} addLog={addLog} lang={lang} />;
   }

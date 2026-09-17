@@ -1,8 +1,21 @@
 import React from 'react';
+import { translations, LanguageCode } from '../../translations';
 
 // New-tools registry (additive expansion). Existing TOOLS/constants are
-// untouched; these definitions live entirely in new files. Text is English
-// by design so src/translations.ts stays frozen.
+// untouched. Canonical English text lives in the defs below; translated
+// titles/descriptions/categories resolve via translations.ts (`nt_*` keys)
+// with English fallback. Operation/param labels remain English-by-design.
+
+export const ntTitle = (id: string, lang: string): string =>
+  translations[`nt_${id}_title`]?.[lang as LanguageCode] || NEW_TOOL_MAP[id]?.title || id;
+
+export const ntDesc = (id: string, lang: string): string =>
+  translations[`nt_${id}_desc`]?.[lang as LanguageCode] || NEW_TOOL_MAP[id]?.desc || '';
+
+export const ntCat = (cat: string, lang: string): string => {
+  const slug = cat.toLowerCase().replace(/[^a-z]+/g, '_').replace(/^_|_$/g, '');
+  return translations[`nt_cat_${slug}`]?.[lang as LanguageCode] || cat;
+};
 
 export type ParamType = 'text' | 'number' | 'select' | 'check' | 'pages' | 'filepick' | 'textarea';
 

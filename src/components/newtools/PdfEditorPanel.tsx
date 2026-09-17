@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ToolState } from '../../types';
 import ProgressBar from '../ProgressBar';
+import { ntTitle } from './toolDefs';
+import { translations, LanguageCode } from '../../translations';
 import { previewSrc } from './preview';
 
 interface Props {
   state: ToolState;
   setState: React.Dispatch<React.SetStateAction<ToolState>>;
   addLog: (message: string, type?: 'info' | 'error' | 'success') => void;
+  lang: string;
 }
 
 interface EditObj {
@@ -38,7 +41,8 @@ let jobSeq = 0;
 const TOOLS = ['select', 'edittext', 'text', 'note', 'highlight', 'underline', 'strike', 'rect', 'circle', 'line', 'arrow', 'draw', 'image'];
 const COLORS = ['#111111', '#cc0000', '#0066cc', '#009900', '#ff9900', '#9900cc', '#ffffff'];
 
-const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
+const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
+  const t = (key: string) => translations[key]?.[lang as LanguageCode] || key;
   const [pdfPath, setPdfPath] = useState('');
   const [pdfName, setPdfName] = useState('');
   const [pages, setPages] = useState(1);
@@ -357,8 +361,8 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog }) => {
     <div className="h-full max-w-7xl mx-auto flex flex-col p-4 gap-4 overflow-y-auto custom-scrollbar">
       <div className="liquid-glass rounded-[1.5rem] p-5 border border-white/5 flex flex-wrap items-center gap-3">
         <div>
-          <h2 className="text-xl font-bold">PDF Editor</h2>
-          <p className="text-white/40 text-xs">Annotate pages, truly replace existing text (edittext tool), and manage pages. Vector content is preserved; the original file is never overwritten.</p>
+          <h2 className="text-xl font-bold">{ntTitle('pdf_editor', lang)}</h2>
+          <p className="text-white/40 text-xs">{t('nt_pdf_editor_sub')}</p>
         </div>
         <div className="flex-1" />
         <button onClick={pickPdf} className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase tracking-widest">Open PDF</button>
