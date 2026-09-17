@@ -377,10 +377,14 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
           <p className="text-white/40 text-xs">{t('nt_pdf_editor_sub')}</p>
         </div>
         <div className="flex-1" />
-        <button onClick={pickPdf} className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase tracking-widest">Open PDF</button>
-        {pdfName && <span className="text-[0.6875em] text-white/60">{pdfName}</span>}
-        <button onClick={() => el()?.selectDirectory().then((d: string) => d && setOutDir(d))}
-          className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase tracking-widest">Output folder</button>
+        {!pdfPath ? (
+          <button onClick={pickPdf} className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase tracking-widest">Open PDF</button>
+        ) : (
+          <>
+            {pdfName && <span className="text-[0.6875em] text-white/60">{pdfName}</span>}
+            <button onClick={pickPdf} className="px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-[0.625em] font-bold uppercase tracking-widest">Replace PDF</button>
+          </>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2 items-center liquid-glass rounded-[1.5rem] px-5 py-3 border border-white/5">
@@ -546,17 +550,30 @@ const PdfEditorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) => {
 
           {(state.isProcessing || state.completed) && <ProgressBar progress={state.progress} active={state.isProcessing} completed={state.completed} lang="en" />}
 
-          {!state.isProcessing ? (
-            <button onClick={save} disabled={!pdfPath}
-              className="py-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-[0.625em] font-bold uppercase tracking-[0.2em] disabled:opacity-20 btn-centered">
-              Save
-            </button>
-          ) : (
-            <button onClick={async () => { setCancelling(true); try { await el()?.cancelNewTool({ jobId: jobRef.current }); } catch (e) { /* noop */ } }}
-              className={`py-4 rounded-full text-white text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered ${cancelling ? 'bg-white/10 animate-pulse' : 'bg-[#cc4455]'}`}>
-              {cancelling ? 'Stopping…' : 'Stop'}
-            </button>
+          {outDir && (
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-[0.6875em] text-white/30 font-bold uppercase">Folder:</span>
+              <span className="text-[0.6875em] text-white/60 truncate" title={outDir}>{outDir}</span>
+            </div>
           )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <button onClick={() => el()?.selectDirectory().then((d: string) => d && setOutDir(d))}
+              className="py-4 rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered">
+              Output folder
+            </button>
+            {!state.isProcessing ? (
+              <button onClick={save} disabled={!pdfPath}
+                className="py-4 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-[0.625em] font-bold uppercase tracking-[0.2em] disabled:opacity-20 btn-centered">
+                Save
+              </button>
+            ) : (
+              <button onClick={async () => { setCancelling(true); try { await el()?.cancelNewTool({ jobId: jobRef.current }); } catch (e) { /* noop */ } }}
+                className={`py-4 rounded-full text-white text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered ${cancelling ? 'bg-white/10 animate-pulse' : 'bg-[#cc4455]'}`}>
+                {cancelling ? 'Stopping…' : 'Stop'}
+              </button>
+            )}
+          </div>
           {outFiles.map((o, i) => (
             <button key={i} onClick={() => el()?.openPath(o)} className="text-[0.6875em] text-blue-300 truncate">Open: {o.split(/[/\\]/).pop()}</button>
           ))}
