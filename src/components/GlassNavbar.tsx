@@ -75,7 +75,7 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang }
           </button>
         ))}
         {/* Additive expansion: overflow menu for the 25 new tools. Existing tabs above are untouched. */}
-        <MoreToolsMenu activeTab={activeTab} setActiveTab={setActiveTab} />
+        <MoreToolsMenu activeTab={activeTab} setActiveTab={setActiveTab} lang={lang} />
       </div>
 
       <div className="flex items-center gap-4">

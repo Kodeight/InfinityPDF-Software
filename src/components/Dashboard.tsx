@@ -106,7 +106,7 @@ const Dashboard: React.FC<Props> = ({ onSelectTool, lang }) => {
 
       {/* All 25 new tools, same card style, 5 per row under the core tools. */}
       <div className="w-full max-w-7xl mx-auto mt-14 pb-16">
-        <h2 className="text-center text-[0.625em] font-bold uppercase tracking-[0.35em] text-white/30 mb-6">More Tools</h2>
+        <h2 className="text-center text-[0.625em] font-bold uppercase tracking-[0.35em] text-white/30 mb-6">{t('more_tools')}</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 items-start justify-center" role="list">
           {NEW_TOOL_DEFS.map((d) => (
             <ToolCard

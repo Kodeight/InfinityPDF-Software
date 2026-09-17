@@ -157,7 +157,7 @@ const PermissionsPanel: React.FC<Props> = ({ tool, state, setState, addLog, hand
         if (wasCancelled) break;
         const filePath = (file as any).path;
         if (!filePath) {
-          addLog(`Skipping ${file.name}: Path not found`, "error");
+          addLog(`${t('skipping_file_path')}: ${file.name}`, "error");
           continue;
         }
 

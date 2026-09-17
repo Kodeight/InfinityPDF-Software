@@ -1,15 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ToolId } from '../../types';
 import { NEW_TOOL_CATEGORIES, NEW_TOOL_DEFS } from './toolDefs';
+import { translations, LanguageCode } from '../../translations';
 
 interface Props {
   activeTab: 'dashboard' | ToolId;
   setActiveTab: (tab: 'dashboard' | ToolId) => void;
+  lang?: string;
 }
 
 // Overflow menu for the 25 additive tools. New file; the existing navbar
 // buttons are untouched — this is a single appended entry.
-const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab }) => {
+const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
+  const t = (key: string) => translations[key]?.[(lang || 'en') as LanguageCode] || key;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const isActive = NEW_TOOL_DEFS.some((d) => d.id === activeTab);
@@ -35,7 +38,7 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab }) => {
         onClick={() => setOpen((o) => !o)}
         className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${isActive ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
       >
-        More Tools ▾
+        {t('more_tools')} ▾
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-2 w-[560px] max-h-[70vh] overflow-y-auto custom-scrollbar bg-[#141414] border border-white/10 rounded-2xl shadow-2xl p-4 z-[100]">

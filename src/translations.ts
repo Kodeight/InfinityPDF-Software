@@ -73,6 +73,15 @@ export const translations: Translations = {
     pt: "Ferramenta",
     ar: "أداة",
   },
+  more_tools: {
+    en: "More Tools",
+    fr: "Plus d'outils",
+    de: "Weitere Tools",
+    es: "Más herramientas",
+    it: "Altri strumenti",
+    pt: "Mais ferramentas",
+    ar: "المزيد من الأدوات",
+  },
 
   // Core Tool card descriptions (short, shown inside the fixed-size cards).
   multi_pdf_card_desc: {
