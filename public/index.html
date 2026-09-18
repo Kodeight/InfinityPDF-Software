@@ -10,6 +10,15 @@
     <link rel="shortcut icon" href="%PUBLIC_URL%/favicon.ico" />
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    <script>
+        // Apply the persisted theme before React mounts (avoids a dark flash
+        // for Light Mode users). Mirrors App.tsx ('infinitypdf-theme').
+        try {
+            if (localStorage.getItem('infinitypdf-theme') === 'light') {
+                document.documentElement.dataset.theme = 'light';
+            }
+        } catch (e) { /* ignore */ }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Jost:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -164,6 +173,57 @@
             --tw-ring-color: transparent !important;
             --tw-ring-offset-width: 0px !important;
             box-shadow: none !important;
+        }
+
+        /* Light Mode surfaces (warm light InfinityPDF glass; geometry untouched).
+           Text/surface utilities follow automatically via theme-aware CSS vars. */
+        html[data-theme="light"] body {
+            background: #f3f1ea;
+        }
+        html[data-theme="light"] .bg-animate {
+            background: #f3f1ea;
+        }
+        html[data-theme="light"] .bg-vignette {
+            background: radial-gradient(circle at 50% 50%, rgba(29, 30, 36, 0.05) 0%, transparent 100%);
+        }
+        html[data-theme="light"] .liquid-glass {
+            background: rgba(255, 255, 255, 0.65);
+            border: 1px solid rgba(29, 30, 36, 0.08);
+            box-shadow: 0 8px 24px 0 rgba(29, 30, 36, 0.08);
+        }
+        html[data-theme="light"] .tool-btn {
+            border: 2px dashed rgba(29, 30, 36, 0.12);
+        }
+        html[data-theme="light"] .tool-btn:hover {
+            border-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.06);
+        }
+        html[data-theme="light"] .loader-container {
+            background: #f3f1ea;
+        }
+        html[data-theme="light"] #cursor-dot {
+            background: #1d1e24;
+        }
+        html[data-theme="light"] #cursor-ring {
+            border-color: rgba(29, 30, 36, 0.3);
+        }
+        html[data-theme="light"] ::-webkit-scrollbar-track { background: rgba(29, 30, 36, 0.06); }
+        html[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(29, 30, 36, 0.18); }
+        html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(29, 30, 36, 0.3); }
+        html[data-theme="light"] .custom-scrollbar {
+            scrollbar-color: rgba(29, 30, 36, 0.18) rgba(29, 30, 36, 0.06);
+        }
+        html[data-theme="light"] .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(29, 30, 36, 0.05);
+        }
+        html[data-theme="light"] .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(29, 30, 36, 0.2);
+        }
+        html[data-theme="light"] .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(29, 30, 36, 0.32);
+        }
+        .liquid-glass {
+            transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
         }
     </style>
 </head>

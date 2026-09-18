@@ -42,9 +42,13 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
       </button>
       {open && (
         <div className="absolute right-0 top-full mt-2 w-[560px] max-h-[70vh] overflow-y-auto custom-scrollbar bg-[#141414] border border-white/10 rounded-2xl shadow-2xl p-4 z-[100]">
-          <div className="grid grid-cols-2 gap-4">
+          {/* Uniform spacing system: CSS columns (not grid) so every
+              category boundary has the identical gap regardless of how
+              many tools each group contains. Grid rows stretch to the
+              tallest group, which made heading-to-heading gaps vary. */}
+          <div className="columns-2 gap-4">
             {NEW_TOOL_CATEGORIES.map((cat) => (
-              <div key={cat}>
+              <div key={cat} className="mb-4 break-inside-avoid last:mb-0">
                 <p className="text-[0.5625em] font-bold uppercase tracking-[0.25em] text-white/30 mb-1 px-1">{ntCat(cat, lang || 'en')}</p>
                 {NEW_TOOL_DEFS.filter((d) => d.category === cat).map((d) => (
                   <button

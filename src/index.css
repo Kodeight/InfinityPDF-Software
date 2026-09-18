@@ -4,9 +4,39 @@
 @tailwind utilities;
 
 /* Global font and color */
+:root {
+  /* Design tokens (Dark Mode defaults). tailwind.config maps the entire
+   * white/* utility family onto --tw-white, so text/borders/translucent
+   * surfaces follow the theme with zero component changes. */
+  --tw-white: 255 255 255;
+  --bg-app: #000000;
+  --text-primary: #ffffff;
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --input-border: rgba(255, 255, 255, 0.10);
+  --input-border-hover: rgba(255, 255, 255, 0.22);
+  --input-border-focus: #3b82f6;
+  --option-bg: #1a1a1a;
+  --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23FFFFFF' stroke-opacity='0.55' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  color-scheme: dark;
+}
+html[data-theme="light"] {
+  --tw-white: 29 30 36;
+  --bg-app: #f3f1ea;
+  --text-primary: #1d1e24;
+  --input-bg: #ffffff;
+  --input-border: rgba(29, 30, 36, 0.16);
+  --input-border-hover: rgba(29, 30, 36, 0.32);
+  --option-bg: #ffffff;
+  --chevron: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%231D1E24' stroke-opacity='0.6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  color-scheme: light;
+}
 :root, body {
   font-family: "Josefin Sans", sans-serif;
-  color: #ffffff;
+  color: rgb(var(--tw-white));
+}
+body {
+  background: var(--bg-app);
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* Fix gradient text display */
@@ -93,3 +123,105 @@ html:not(:lang(ar)) button.uppercase[class~="py-3"] { padding-top: calc(0.75rem 
 html:not(:lang(ar)) button.uppercase[class~="py-3.5"] { padding-top: calc(0.875rem + 0.08em); padding-bottom: calc(0.875rem - 0.08em); }
 html:not(:lang(ar)) button.uppercase[class~="py-4"] { padding-top: calc(1rem + 0.08em); padding-bottom: calc(1rem - 0.08em); }
 html:not(:lang(ar)) button.uppercase[class~="py-5"] { padding-top: calc(1.25rem + 0.08em); padding-bottom: calc(1.25rem - 0.08em); }
+
+/* ------------------------------------------------------------------
+ * Shared InfinityPDF select system (ONE rule for every native select).
+ *
+ * Closed state: themed glass background, subtle border, rounded corners,
+ * symmetric padding (vertically centered text), custom chevron, hover
+ * and focus (border-only: the global focus reset kills outlines and
+ * shadows). Keyboard navigation and the native option popup are
+ * preserved. Component padding/size classes still win where set, so
+ * compact selects (navbar, editor toolbar) keep their dimensions.
+ * ------------------------------------------------------------------ */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--input-bg);
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 0.75rem auto;
+  border: 1px solid var(--input-border);
+  border-radius: 0.75rem;
+  padding: 0.625rem 2.25rem 0.625rem 0.75rem;
+  line-height: 1.4;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+select:hover {
+  border-color: var(--input-border-hover);
+}
+select:focus {
+  border-color: var(--input-border-focus);
+}
+select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+select option {
+  background-color: var(--option-bg);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------------
+ * Light Mode component overrides (centralized; no per-component edits).
+ * The white/* family already follows --tw-white; below are the cases
+ * that need explicit treatment: full-black app surfaces, full-white
+ * pills, white text on colored buttons, hardcoded dark hex surfaces,
+ * and accent text that is too faint on light backgrounds.
+ * ------------------------------------------------------------------ */
+html[data-theme="light"] body {
+  background: var(--bg-app);
+}
+html[data-theme="light"] .bg-black {
+  background-color: var(--bg-app);
+}
+html[data-theme="light"] .bg-black\/20 {
+  background-color: rgba(29, 30, 36, 0.05);
+}
+html[data-theme="light"] .bg-white {
+  background-color: #ffffff;
+}
+/* White text must stay white on saturated button backgrounds. */
+html[data-theme="light"] :is(.bg-blue-600, .bg-blue-500, .bg-emerald-600, .bg-\[\#cc4455\]).text-white {
+  color: #fff;
+}
+html[data-theme="light"] .hover\:bg-\[\#cc4455\]:hover {
+  color: #fff;
+}
+/* Hardcoded dark surfaces become light surfaces. */
+html[data-theme="light"] .bg-\[\#141414\] {
+  background-color: #ffffff;
+}
+html[data-theme="light"] .bg-\[\#1a1a1a\] {
+  background-color: #ffffff;
+}
+html[data-theme="light"] select option,
+html[data-theme="light"] option.bg-\[\#1a1a1a\] {
+  background-color: #ffffff;
+  color: #1d1e24;
+}
+/* Accent text darkened for contrast on light backgrounds. */
+html[data-theme="light"] .text-blue-200 { color: #1e40af; }
+html[data-theme="light"] .text-blue-300,
+html[data-theme="light"] .text-blue-300\/80 { color: #1d4ed8; }
+html[data-theme="light"] .text-blue-400,
+html[data-theme="light"] .text-blue-400\/60 { color: #2563eb; }
+html[data-theme="light"] .hover\:text-blue-200:hover { color: #1e40af; }
+html[data-theme="light"] .hover\:text-blue-400:hover,
+html[data-theme="light"] .group:hover .group-hover\:text-blue-400 { color: #2563eb; }
+html[data-theme="light"] .text-emerald-300,
+html[data-theme="light"] .text-emerald-400 { color: #047857; }
+html[data-theme="light"] .text-red-300 { color: #b91c1c; }
+html[data-theme="light"] .text-red-400 { color: #dc2626; }
+html[data-theme="light"] .hover\:text-red-300:hover { color: #b91c1c; }
+html[data-theme="light"] .hover\:text-red-400:hover { color: #dc2626; }
+html[data-theme="light"] .text-amber-200 { color: #92400e; }
+html[data-theme="light"] .text-violet-200 { color: #5b21b6; }
+html[data-theme="light"] .text-violet-300 { color: #6d28d9; }
+/* Navbar logo mark (fill="white" svg) needs ink on light glass. */
+html[data-theme="light"] nav svg[fill="white"] { fill: #1d1e24; }
+/* Loader track visible on light. */
+html[data-theme="light"] .loader-track { stroke: rgba(29, 30, 36, 0.08); }

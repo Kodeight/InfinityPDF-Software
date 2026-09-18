@@ -7,6 +7,7 @@ import PermissionsPanel from './PermissionsPanel';
 import UniversalPanel from './UniversalPanel';
 import NewToolView from './newtools/NewToolView';
 import PdfEditorPanel from './newtools/PdfEditorPanel';
+import PdfCompressorPanel from './newtools/PdfCompressorPanel';
 import { NEW_TOOL_MAP } from './newtools/toolDefs';
 
 interface Props {
@@ -40,6 +41,9 @@ const ToolView: React.FC<Props> = ({ toolId, lang }) => {
   if (newDef) {
     if (toolId === 'pdf_editor') {
       return <PdfEditorPanel state={state} setState={setState} addLog={addLog} lang={lang} />;
+    }
+    if (toolId === 'pdf_compressor') {
+      return <PdfCompressorPanel state={state} setState={setState} addLog={addLog} lang={lang} />;
     }
     return <NewToolView def={newDef} state={state} setState={setState} addLog={addLog} lang={lang} />;
   }

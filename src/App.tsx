@@ -9,6 +9,16 @@ import Loader from './components/Loader';
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | ToolId>('dashboard');
   const [lang, setLang] = useState('en');
+  // Theme: dark default, persisted in localStorage (same mechanism the
+  // panels already use for other prefs). Applied as data-theme on <html>
+  // so CSS tokens + Tailwind's theme-aware white/* utilities follow.
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem('infinitypdf-theme') === 'light' ? 'light' : 'dark';
+    } catch (e) {
+      return 'dark';
+    }
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
@@ -52,6 +62,13 @@ const App: React.FC = () => {
     document.documentElement.lang = lang;
   }, [lang]);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem('infinitypdf-theme', theme);
+    } catch (e) { /* private mode: theme just won't persist */ }
+  }, [theme]);
+
   const handleSetTab = (tab: 'dashboard' | ToolId) => {
     if (tab !== activeTab) {
       setIsLoading(true);
@@ -75,7 +92,9 @@ const App: React.FC = () => {
         activeTab={activeTab} 
         setActiveTab={handleSetTab} 
         lang={lang} 
-        setLang={setLang} 
+        setLang={setLang}
+        theme={theme}
+        setTheme={setTheme}
       />
       
       <main className="flex-1 min-h-0 relative">

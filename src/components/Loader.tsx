@@ -15,6 +15,7 @@ const Loader: React.FC<Props> = ({ fullScreen = true }) => {
         >
           {/* Background Track */}
           <path
+            className="loader-track"
             d="M25,12.5 C10,12.5 10,37.5 25,37.5 C35,37.5 65,12.5 75,12.5 C90,12.5 90,37.5 75,37.5 C65,37.5 35,12.5 25,12.5 Z"
             fill="none"
             stroke="rgba(255, 255, 255, 0.03)"
