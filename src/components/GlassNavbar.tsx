@@ -107,7 +107,7 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang, 
           id="language-selector"
           value={lang}
           onChange={(e) => setLang(e.target.value)}
-          className="bg-transparent text-white/70 text-xs font-medium border-none cursor-pointer hover:text-white transition-colors outline-none p-1 rounded"
+          className="bg-transparent text-white/70 text-xs font-medium border-none cursor-pointer hover:text-white transition-colors outline-none pl-3 pr-9 py-1.5 rounded"
         >
           {LANGUAGES.map(l => (
             <option key={l.code} value={l.code} className="bg-[#1a1a1a]">

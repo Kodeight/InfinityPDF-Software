@@ -214,14 +214,28 @@ html[data-theme="light"] .hover\:text-blue-400:hover,
 html[data-theme="light"] .group:hover .group-hover\:text-blue-400 { color: #2563eb; }
 html[data-theme="light"] .text-emerald-300,
 html[data-theme="light"] .text-emerald-400 { color: #047857; }
-html[data-theme="light"] .text-red-300 { color: #b91c1c; }
-html[data-theme="light"] .text-red-400 { color: #dc2626; }
-html[data-theme="light"] .hover\:text-red-300:hover { color: #b91c1c; }
-html[data-theme="light"] .hover\:text-red-400:hover { color: #dc2626; }
+html[data-theme="light"] .text-red-300,
+html[data-theme="light"] .text-red-400 { color: #b91c1c; }
+html[data-theme="light"] .hover\:text-red-300:hover,
+html[data-theme="light"] .hover\:text-red-400:hover { color: #b91c1c; }
 html[data-theme="light"] .text-amber-200 { color: #92400e; }
 html[data-theme="light"] .text-violet-200 { color: #5b21b6; }
 html[data-theme="light"] .text-violet-300 { color: #6d28d9; }
-/* Navbar logo mark (fill="white" svg) needs ink on light glass. */
-html[data-theme="light"] nav svg[fill="white"] { fill: #1d1e24; }
+/* Faint white/* text becomes solid readable neutrals (measured WCAG
+ * contrast on #f3f1ea: /20=4.25, /25=5.01, /30~5.7, /35=6.40,
+ * /40=8.35, /50>8). No opacity-hazed gray text remains. */
+html[data-theme="light"] .text-white\/20 { color: #6f727b; }
+html[data-theme="light"] .text-white\/25 { color: #64676f; }
+html[data-theme="light"] .text-white\/30 { color: #5b5e66; }
+html[data-theme="light"] .text-white\/35 { color: #54575f; }
+html[data-theme="light"] .text-white\/40 { color: #43464e; }
+html[data-theme="light"] .text-white\/50 { color: #33363d; }
+/* Light borders stay visible: dashed zones, inputs, cards. */
+html[data-theme="light"] .border-white\/5 { border-color: rgba(29, 30, 36, 0.14); }
+html[data-theme="light"] .border-white\/10 { border-color: rgba(29, 30, 36, 0.24); }
+html[data-theme="light"] .border-white\/20 { border-color: rgba(29, 30, 36, 0.32); }
+/* Placeholders readable (4.25) without touching Dark Mode. */
+html[data-theme="light"] input::placeholder,
+html[data-theme="light"] textarea::placeholder { color: #6f727b; opacity: 1; }
 /* Loader track visible on light. */
 html[data-theme="light"] .loader-track { stroke: rgba(29, 30, 36, 0.08); }
