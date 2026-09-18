@@ -2,7 +2,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Tool, ToolState, WatermarkOptions, PDFPermissions } from '../types';
 import ProgressBar from './ProgressBar';
-import { aiService } from '../services/ai';
 import { translations, LanguageCode } from '../translations';
 
 interface Props {
@@ -257,7 +256,6 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
           const student = students[i];
           const progress = Math.floor((((fileIndex * Math.max(students.length, 1)) + i + 1) / totalSteps) * 100);
           setState(prev => ({ ...prev, progress }));
-          if (student) await aiService.generateRecipientToken(student);
           addLog(`[${(fileIndex * Math.max(students.length, 1)) + i + 1}/${totalSteps}] ${t('generate')} ${sourceFiles[fileIndex].name}${student ? ` - ${student}` : ''}`, 'success');
           await new Promise(r => setTimeout(r, 100));
           }

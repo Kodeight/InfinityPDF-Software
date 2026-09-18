@@ -2,7 +2,6 @@
 import React, { useState, useRef } from 'react';
 import { Tool, ToolState } from '../types';
 import ProgressBar from './ProgressBar';
-import { aiService } from '../services/ai';
 import { translations, LanguageCode } from '../translations';
 
 interface Props {

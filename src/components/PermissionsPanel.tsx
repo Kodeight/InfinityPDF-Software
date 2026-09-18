@@ -2,7 +2,6 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Tool, ToolState, PDFPermissions } from '../types';
 import ProgressBar from './ProgressBar';
-import { aiService } from '../services/ai';
 import { translations, LanguageCode } from '../translations';
 
 // Added handleProcess to Props to match ToolView's call and resolve type error
