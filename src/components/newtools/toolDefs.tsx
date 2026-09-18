@@ -121,8 +121,10 @@ export const NEW_TOOL_DEFS: NewToolDef[] = [
     id: 'pdf_compressor', title: 'PDF Compressor', category: 'Optimize',
     desc: 'Reduce PDF size with 4 compression levels and image controls.',
     icon: ICONS.Optimize, inputs: [PDFS()],
+    // NOTE: the backend keeps its internal `info` op for PDF inspection,
+    // but no user-facing Analyze action exists (dedicated panel workflow:
+    // Add PDFs → configure → Compress → results → Export).
     operations: [
-      { name: 'info', label: 'Analyze', params: [] },
       {
         name: 'compress', label: 'Compress', params: [
           P('level', 'Level', 'select', 'balanced', { options: ['low', 'balanced', 'high', 'maximum'] }),

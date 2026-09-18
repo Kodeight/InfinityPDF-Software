@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ToolState } from '../../types';
 import ProgressBar from '../ProgressBar';
 import { ntTitle, ntDesc } from './toolDefs';
@@ -11,8 +11,6 @@ interface Props {
 }
 
 interface LoadedFile { name: string; path: string; size: number }
-
-interface FileInfo { size: number; pages: number; images: number; fonts: number }
 
 interface FileResult {
   path: string;
@@ -54,27 +52,12 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
   const [dpi, setDpi] = useState(''); // blank = Auto (level default)
   const [quality, setQuality] = useState(''); // blank = Auto (level default)
   const [removeMeta, setRemoveMeta] = useState(true);
-  const [infos, setInfos] = useState<Record<string, FileInfo>>({});
   const [results, setResults] = useState<FileResult[]>([]);
-  const [busy, setBusy] = useState<'analyze' | 'compress' | null>(null);
+  const [compressing, setCompressing] = useState(false);
   const [fresh, setFresh] = useState(false); // last run succeeded, inputs untouched since
   const [cancelling, setCancelling] = useState(false);
   const jobRef = useRef('');
   const cancelRef = useRef(false);
-  const fracRef = useRef(0);
-
-  useEffect(() => {
-    let off: (() => void) | undefined;
-    if (el()?.onNewToolProgress) {
-      off = el().onNewToolProgress((msg: any) => {
-        if (msg && msg.jobId === jobRef.current) {
-          fracRef.current = msg.value / 100;
-        }
-      });
-    }
-    return () => { if (off) off(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const markDirty = () => setFresh(false);
 
@@ -106,14 +89,12 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
 
   const removeFile = (path: string) => {
     setFiles((fs) => fs.filter((f) => f.path !== path));
-    setInfos((m) => { const c = { ...m }; delete c[path]; return c; });
     setResults((rs) => rs.filter((r) => r.path !== path));
     markDirty();
   };
 
   const clearAll = () => {
     setFiles([]);
-    setInfos({});
     setResults([]);
     setState((p) => ({ ...p, completed: false, progress: 0 }));
     markDirty();
@@ -122,47 +103,10 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
   const runOp = async (operation: string, args: Record<string, any>) => {
     const token = `cmp_${Date.now()}_${++jobSeq}`;
     jobRef.current = token;
-    fracRef.current = 0;
     const res = await el().runNewTool({ jobId: token, tool: 'pdf_compressor', operation, args });
     if (res?.cancelled) return null;
     if (!res?.success) throw new Error(res?.error || 'Compressor backend failed');
     return res;
-  };
-
-  const analyze = async () => {
-    if (busy || !files.length) return;
-    if (!el()?.runNewTool) { addLog('This tool needs the desktop app.', 'error'); return; }
-    setBusy('analyze');
-    setCancelling(false);
-    cancelRef.current = false;
-    setState((p) => ({ ...p, isProcessing: true, progress: 0, completed: false }));
-    const next: Record<string, FileInfo> = { ...infos };
-    try {
-      for (let i = 0; i < files.length; i++) {
-        if (cancelRef.current) break;
-        const f = files[i];
-        try {
-          const res = await runOp('info', { pdf: f.path });
-          if (res === null) break; // cancelled
-          const info = res.info || {};
-          next[f.path] = {
-            size: info.file_size_bytes ?? f.size,
-            pages: info.pages ?? 0,
-            images: info.image_count ?? 0,
-            fonts: info.font_count ?? 0,
-          };
-          setInfos({ ...next });
-        } catch (e: any) {
-          addLog(`Analyze failed for ${f.name}: ${e.message}`, 'error');
-        }
-        setState((p) => ({ ...p, progress: Math.round(((i + 1) / files.length) * 100) }));
-      }
-      if (!cancelRef.current) addLog('Analysis complete.', 'success');
-    } finally {
-      setBusy(null);
-      setCancelling(false);
-      setState((p) => ({ ...p, isProcessing: false }));
-    }
   };
 
   const parseOpt = (raw: string, min: number, max: number, label: string): number | undefined => {
@@ -176,7 +120,7 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
   };
 
   const compress = async () => {
-    if (busy || !files.length) return;
+    if (compressing || !files.length) return;
     if (!el()?.runNewTool) { addLog('This tool needs the desktop app.', 'error'); return; }
     let dpiVal: number | undefined;
     let qVal: number | undefined;
@@ -187,7 +131,7 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
       addLog(e.message, 'error');
       return;
     }
-    setBusy('compress');
+    setCompressing(true);
     setCancelling(false);
     cancelRef.current = false;
     setFresh(false);
@@ -229,14 +173,14 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
         addLog(`Compression complete (${ok.length}/${files.length} files). Choose Export to save.`, 'success');
       }
     } finally {
-      setBusy(null);
+      setCompressing(false);
       setCancelling(false);
       if (cancelRef.current) setState((p) => ({ ...p, isProcessing: false }));
     }
   };
 
   const stop = async () => {
-    if (!busy || cancelling) return;
+    if (!compressing || cancelling) return;
     setCancelling(true);
     cancelRef.current = true;
     try { await el()?.cancelNewTool({ jobId: jobRef.current }); } catch (e) { /* noop */ }
@@ -288,12 +232,7 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
                 <span className="text-white/30 font-mono w-6 shrink-0">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <p className="truncate font-bold text-white/80">{f.name}</p>
-                  <p className="text-[0.6875em] text-white/35">
-                    {fmtBytes(infos[f.path]?.size ?? f.size)}
-                    {infos[f.path] && (
-                      <> · {infos[f.path].pages} page(s) · {infos[f.path].images} image(s) · {infos[f.path].fonts} font(s)</>
-                    )}
-                  </p>
+                  <p className="text-[0.6875em] text-white/35">{fmtBytes(f.size)}</p>
                 </div>
                 <button onClick={() => removeFile(f.path)} className="text-white/30 hover:text-red-300 shrink-0" aria-label={`Remove ${f.name}`}>✕</button>
               </div>
@@ -334,24 +273,21 @@ const PdfCompressorPanel: React.FC<Props> = ({ state, setState, addLog, lang }) 
               inputMode="numeric" className={inputCls} />
           </label>
         </div>
-        <div className="grid grid-cols-2 gap-3 mt-4">
-          <button onClick={analyze} disabled={busy !== null || !files.length}
-            className="py-3.5 rounded-full bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered disabled:opacity-20">
-            {busy === 'analyze' ? (cancelling ? 'Stopping…' : 'Analyzing…') : 'Analyze'}
-          </button>
-          {!busy ? (
+        {/* Single primary action, full width — no Analyze step. */}
+        <div className="mt-4">
+          {!compressing ? (
             <button onClick={compress} disabled={!files.length}
-              className={`py-3.5 rounded-full text-white text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered disabled:opacity-20 ${fresh ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-blue-600 hover:bg-blue-500'}`}>
+              className={`w-full py-3.5 rounded-full text-white text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered disabled:opacity-20 ${fresh ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-blue-600 hover:bg-blue-500'}`}>
               {fresh ? 'Compression complete' : 'Compress'}
             </button>
           ) : (
             <button onClick={stop}
-              className={`py-3.5 rounded-full text-white text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered ${cancelling ? 'bg-white/10 animate-pulse' : 'bg-[#cc4455]'}`}>
+              className={`w-full py-3.5 rounded-full text-white text-[0.625em] font-bold uppercase tracking-[0.2em] btn-centered ${cancelling ? 'bg-white/10 animate-pulse' : 'bg-[#cc4455]'}`}>
               {cancelling ? 'Stopping…' : 'Stop'}
             </button>
           )}
         </div>
-        {(busy !== null) && (
+        {compressing && (
           <div className="mt-4"><ProgressBar progress={state.progress} active completed={false} lang={lang} /></div>
         )}
       </div>

@@ -36,7 +36,7 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${isActive ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+        className={`btn-nav px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${isActive ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
       >
         {t('more_tools')} ▾
       </button>
@@ -59,7 +59,10 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
                   <button
                     key={d.id}
                     onClick={() => { setActiveTab(d.id as ToolId); setOpen(false); }}
-                    className={`w-full text-left px-3 py-2 rounded-xl transition-all ${activeTab === d.id ? 'bg-blue-600/20 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
+                    // flex-col restores the intended stacked title/desc layout:
+                    // the global button rule makes buttons inline-flex (row),
+                    // which would otherwise place both spans side by side.
+                    className={`btn-nav w-full flex-col items-stretch text-left px-3 py-2 rounded-xl transition-all ${activeTab === d.id ? 'bg-blue-600/20 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'}`}
                   >
                     <span className="text-xs font-bold block">{ntTitle(d.id, lang || 'en')}</span>
                     <span className="text-[0.625em] text-white/35 block truncate">{ntDesc(d.id, lang || 'en')}</span>

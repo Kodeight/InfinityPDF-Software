@@ -69,7 +69,7 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang, 
           role="menuitem"
           aria-current={activeTab === 'dashboard' ? 'page' : undefined}
           onClick={() => setActiveTab('dashboard')}
-          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+          className={`btn-nav px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
             activeTab === 'dashboard' ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/5'
           }`}
         >
@@ -81,7 +81,7 @@ const GlassNavbar: React.FC<Props> = ({ activeTab, setActiveTab, lang, setLang, 
             role="menuitem"
             aria-current={activeTab === tool.id ? 'page' : undefined}
             onClick={() => setActiveTab(tool.id)}
-            className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+            className={`btn-nav px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
               activeTab === tool.id ? 'bg-white/10 text-white' : 'text-white/50 hover:text-white hover:bg-white/5'
             }`}
           >

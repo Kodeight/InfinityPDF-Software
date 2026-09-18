@@ -125,6 +125,24 @@ html:not(:lang(ar)) button.uppercase[class~="py-4"] { padding-top: calc(1rem + 0
 html:not(:lang(ar)) button.uppercase[class~="py-5"] { padding-top: calc(1.25rem + 0.08em); padding-bottom: calc(1.25rem - 0.08em); }
 
 /* ------------------------------------------------------------------
+ * Shared optical correction for mixed-case NAV/MENU labels (same system
+ * as the all-caps rule above).
+ *
+ * Navbar tabs ("Multi PDF", "Universal Converter", …) and menu items
+ * are semibold mixed-case labels with no descenders in most strings.
+ * Like all-caps ink, their glyph mass sits above the line-box center,
+ * so flex centering alone leaves them visibly high inside symmetric
+ * padding. Same measured remedy: shift 0.08em of vertical padding from
+ * bottom to top. Total button height is bit-for-bit preserved.
+ *
+ * Scope: only `button.btn-nav` (navbar tabs, More Tools toggle + menu
+ * items). Icon-only buttons, uppercase buttons (own rule above), and
+ * Arabic (deep descenders, no correction) are untouched.
+ * ------------------------------------------------------------------ */
+html:not(:lang(ar)) button.btn-nav[class~="py-1.5"] { padding-top: calc(0.375rem + 0.08em); padding-bottom: calc(0.375rem - 0.08em); }
+html:not(:lang(ar)) button.btn-nav[class~="py-2"] { padding-top: calc(0.5rem + 0.08em); padding-bottom: calc(0.5rem - 0.08em); }
+
+/* ------------------------------------------------------------------
  * Shared InfinityPDF select system (ONE rule for every native select).
  *
  * Closed state: themed glass background, subtle border, rounded corners,
