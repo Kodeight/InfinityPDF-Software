@@ -37,8 +37,11 @@ const LogDropdown: React.FC<Props> = ({ logs, lang }) => {
           id="logs-menu"
           role="log"
           aria-live="polite"
-          className="absolute top-full right-0 mt-3 w-80 max-h-96 overflow-y-auto liquid-glass rounded-2xl z-50 p-4 border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200 origin-top-right custom-scrollbar"
+          className="absolute top-full right-0 mt-3 w-80 liquid-glass rounded-2xl z-50 border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200 origin-top-right overflow-hidden"
         >
+          {/* Same clip-wrapper + nested-scroller pattern as MoreToolsMenu:
+              radius and scrolling must not share one element. */}
+          <div className="max-h-96 overflow-y-auto custom-scrollbar p-4">
           {logs.length === 0 ? (
             <div className="text-white/20 text-center py-8 italic text-sm">
               {t('no_logs')}
@@ -58,6 +61,7 @@ const LogDropdown: React.FC<Props> = ({ logs, lang }) => {
               ))}
             </div>
           )}
+          </div>
         </div>
       )}
     </div>

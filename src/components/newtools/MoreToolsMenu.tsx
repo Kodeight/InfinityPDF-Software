@@ -41,7 +41,12 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
         {t('more_tools')} ▾
       </button>
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-[560px] max-h-[70vh] overflow-y-auto custom-scrollbar bg-[#141414] border border-white/10 rounded-2xl shadow-2xl p-4 z-[100]">
+        <div className="absolute right-0 top-full mt-2 w-[560px] bg-[#141414] border border-white/10 rounded-2xl shadow-2xl z-[100] overflow-hidden">
+          {/* Rounded clip wrapper (no scrolling here) + nested scroller:
+              Chromium paints native scrollbar chrome square to the edge,
+              so radius + overflow on one element lets the scrollbar escape
+              the curve. Same pattern in LogDropdown + MultiPDF dropdowns. */}
+          <div className="max-h-[70vh] overflow-y-auto custom-scrollbar p-4">
           {/* Uniform spacing system: CSS columns (not grid) so every
               category boundary has the identical gap regardless of how
               many tools each group contains. Grid rows stretch to the
@@ -62,6 +67,7 @@ const MoreToolsMenu: React.FC<Props> = ({ activeTab, setActiveTab, lang }) => {
                 ))}
               </div>
             ))}
+          </div>
           </div>
         </div>
       )}

@@ -124,6 +124,18 @@
         ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 
+        /* Scroll-container architecture (global rule):
+           NEVER put border-radius and overflow scrolling on the SAME
+           element — Chromium paints native scrollbar chrome square to the
+           edge, letting it escape the rounded corners. Always use:
+               rounded clip wrapper (overflow: hidden, no scrolling)
+                 → nested scroller (max-height + overflow-y: auto)
+           The rounded track/thumb/corner rules below are only a safety
+           net so any legacy same-element scroller still degrades
+           gracefully; they do not replace the wrapper structure. */
+        ::-webkit-scrollbar-track { border-radius: 10px; }
+        ::-webkit-scrollbar-corner { background: transparent; }
+
         /* Custom scrollbar styling */
         .custom-scrollbar {
             scrollbar-width: thin;

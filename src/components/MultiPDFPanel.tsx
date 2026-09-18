@@ -319,7 +319,9 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               }
             </button>
             
-            <div className="flex-1 overflow-y-auto space-y-px custom-scrollbar bg-black/20 rounded-xl border border-white/5 p-3">
+            <div className="flex-1 min-h-0 bg-black/20 rounded-xl border border-white/5 overflow-hidden flex flex-col">
+              {/* Clip-wrapper + nested-scroller (see MoreToolsMenu). */}
+              <div className="flex-1 overflow-y-auto space-y-px custom-scrollbar p-3">
               {items.map((item, idx) => (
                 <div 
                   key={idx} 
@@ -345,6 +347,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
                   <span className="truncate">{item}</span>
                 </div>
               ))}
+              </div>
             </div>
 
             <div className="mt-6 space-y-3">
@@ -506,7 +509,9 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
               </button>
               
               {isDropdownOpen && selectedItems.size > 0 && (
-                <div className="absolute top-full left-0 w-full mt-2 max-h-48 overflow-y-auto bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl z-50 custom-scrollbar">
+                <div className="absolute top-full left-0 w-full mt-2 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden">
+                  {/* Clip-wrapper + nested-scroller (see MoreToolsMenu). */}
+                  <div className="max-h-48 overflow-y-auto custom-scrollbar">
                   {Array.from(selectedItems).map((student, idx) => (
                     <div 
                       key={idx}
@@ -520,6 +525,7 @@ const MultiPDFPanel: React.FC<Props> = ({ tool, state, setState, addLog, lang })
                       {student}
                     </div>
                   ))}
+                  </div>
                 </div>
               )}
             </div>
